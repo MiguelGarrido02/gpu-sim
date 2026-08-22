@@ -1,0 +1,72 @@
+# Phase 1 acceptance test: per-GPU attributes must be selectable, not merely published.
+#
+# The rack-placement tests exercise the node-label projection. This one exercises the
+# other half — the DRA device attributes — which is what lets a workload ask for a
+# particular GPU *within* a node rather than a particular node.
+#
+# The claim selects GPUs on NUMA node 0 with a CEL expression. The cluster has 32 GPUs, 16
+# of them on NUMA node 0, and the Deployment asks for 20. So:
+#
+#   selector honoured  -> 16 pods Running, 4 Pending
+#   selector ignored   -> all 20 Running
+#
+# The gap between those outcomes is the whole point: a test asking for fewer GPUs than
+# NUMA 0 holds would pass either way and prove nothing.
+#
+# The expression reads device.attributes['gpu.nvidia.com'].numaNode because an unqualified
+# attribute takes the publishing driver's name as its domain. That is the same expression
+# that works against NVIDIA's real DRA driver, which is the point of mirroring its
+# attribute names.
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaimTemplate
+metadata:
+  name: numa0-gpu
+  namespace: gpu-sim-test
+spec:
+  spec:
+    devices:
+      requests:
+        - name: gpu
+          exactly:
+            deviceClassName: gpu.nvidia.com
+            selectors:
+              - cel:
+                  expression: device.attributes['gpu.nvidia.com'].numaNode == 0
+---
+# A Deployment rather than a Job: KWOK drives restartPolicy: Never pods straight to
+# Completed, and a terminal pod releases its ResourceClaim, so the GPUs under test would
+# free themselves before they could be counted.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: numa0-only
+  namespace: gpu-sim-test
+spec:
+  replicas: 20
+  selector:
+    matchLabels:
+      app: numa0-only
+  template:
+    metadata:
+      labels:
+        app: numa0-only
+        kai.scheduler/queue: default-queue
+    spec:
+      schedulerName: kai-scheduler
+      nodeSelector:
+        type: kwok
+      tolerations:
+        - key: kwok.x-k8s.io/node
+          operator: Equal
+          value: fake
+          effect: NoSchedule
+      containers:
+        - name: main
+          image: ubuntu:24.04
+          command: ["sleep", "infinity"]
+          resources:
+            claims:
+              - name: gpu
+      resourceClaims:
+        - name: gpu
+          resourceClaimTemplateName: numa0-gpu

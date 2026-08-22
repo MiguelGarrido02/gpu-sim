@@ -26,6 +26,8 @@ smoke: ## Run the smoke tests against the running cluster
 	kubectl apply -f hack/smoke/kai-gang-overcapacity.yaml
 	kubectl apply -f hack/smoke/topology-placement.yaml
 	kubectl apply -f hack/smoke/topology-placement-impossible.yaml
+	kubectl apply -f hack/smoke/device-selector-numa.yaml
+	kubectl apply -f hack/smoke/device-selector-nvlink.yaml
 
 .PHONY: build
 build: ## Build the binaries into bin/

@@ -28,6 +28,24 @@ for _ in $(seq 1 60); do
   sleep 2
 done
 
+# Both default queues ship with a GPU quota of zero. Preemptible workloads (a Job, by
+# default) may exceed their quota, so they schedule anyway; non-preemptible ones (a
+# Deployment) may not, and are refused with "Non-preemptible workload is over quota" —
+# an error about quota on a cluster where quota was never configured, which is a
+# thoroughly confusing thing to hit on a fresh install.
+#
+# Quota is hierarchical, so raising it on the leaf alone is not enough: the parent caps
+# the child, and the error simply moves from one queue to the other.
+#
+# Both are set to a GPU count comfortably above any simulated cluster. Quota is a
+# scheduling policy rather than a property of the hardware, so it stays here rather than
+# in the topology; Phase 3 makes it a per-scenario choice.
+log "Removing the default GPU quota so simulated workloads are not refused"
+for queue in default-parent-queue default-queue; do
+  kubectl patch queue "${queue}" --type=merge \
+    -p '{"spec":{"resources":{"gpu":{"quota":1024,"limit":-1,"overQuotaWeight":1}}}}' >/dev/null
+done
+
 log "KAI Scheduler is ready"
 kubectl get pods -n "${KAI_NAMESPACE}"
 echo

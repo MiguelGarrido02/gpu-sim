@@ -1,0 +1,65 @@
+# Phase 1 acceptance test: selecting GPUs by NVLink domain.
+#
+# This is the attribute that exists nowhere else. NVIDIA's real DRA driver publishes no
+# NVLink-domain attribute — fabric information reaches workloads through the separate
+# ComputeDomain/IMEX machinery — so gpu-sim.io/nvlinkDomain is the project's own addition
+# and the one thing here with no upstream equivalent to fall back on.
+#
+# gpu-node-1's domain holds 8 GPUs and the Deployment asks for 12:
+#
+#   selector honoured  -> 8 pods Running, 4 Pending, every GPU on gpu-node-1
+#   selector ignored   -> all 12 Running, spread across the cluster
+#
+# The gpu-sim.io prefix is explicit in the expression because these attributes are
+# published under their own domain rather than the driver's, which is what marks them as a
+# simulation extension rather than something NVIDIA ships.
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaimTemplate
+metadata:
+  name: nvlink-domain-gpu
+  namespace: gpu-sim-test
+spec:
+  spec:
+    devices:
+      requests:
+        - name: gpu
+          exactly:
+            deviceClassName: gpu.nvidia.com
+            selectors:
+              - cel:
+                  expression: device.attributes['gpu-sim.io'].nvlinkDomain == 'gpu-node-1'
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: one-nvlink-domain
+  namespace: gpu-sim-test
+spec:
+  replicas: 12
+  selector:
+    matchLabels:
+      app: one-nvlink-domain
+  template:
+    metadata:
+      labels:
+        app: one-nvlink-domain
+        kai.scheduler/queue: default-queue
+    spec:
+      schedulerName: kai-scheduler
+      nodeSelector:
+        type: kwok
+      tolerations:
+        - key: kwok.x-k8s.io/node
+          operator: Equal
+          value: fake
+          effect: NoSchedule
+      containers:
+        - name: main
+          image: ubuntu:24.04
+          command: ["sleep", "infinity"]
+          resources:
+            claims:
+              - name: gpu
+      resourceClaims:
+        - name: gpu
+          resourceClaimTemplateName: nvlink-domain-gpu
