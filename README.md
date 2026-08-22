@@ -97,6 +97,40 @@ Same workload, same scheduler, different hardware — answered on a laptop, with
 either machine. On real hardware the difference between those two rows is roughly €2M of
 rack.
 
+## Scenarios
+
+A scenario declares a cluster, some workloads and what should happen. Workloads state
+intent — a gang, a required topology level, a device selector — rather than one scheduler's
+annotations, so the same file can be aimed at more than one scheduler, and a scheduler that
+cannot express an intent fails the scenario by name instead of quietly running something
+weaker.
+
+```yaml
+workloads:
+  - name: training
+    replicas: 12
+    gpus: 1
+    gang: true
+    placement: { required: rack }
+
+assertions:
+  - name: every replica is placed
+    workload: training
+    scheduled: all
+    within: 90s
+  - name: and the job stays inside one rack
+    workload: training
+    confinedTo: rack
+```
+
+```bash
+gpu-sim run scenarios/                     # the suite; non-zero exit if anything failed
+gpu-sim run scenarios/ --json results.json # plus machine-readable output for CI
+```
+
+[`docs/scenarios.md`](docs/scenarios.md) covers every field, the assertion vocabulary, and
+why `within` and `settle` are different words.
+
 ## Why
 
 The Kubernetes GPU stack changed shape in 2026: DRA reached GA in v1.34/v1.35, NVIDIA
