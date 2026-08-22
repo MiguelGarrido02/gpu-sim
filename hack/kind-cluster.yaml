@@ -1,0 +1,14 @@
+# kind cluster used for local development of gpu-sim.
+#
+# A single control-plane node is enough: every GPU node in the simulation is a KWOK
+# node, which has no kubelet and therefore needs no container to back it. Real worker
+# nodes would only add memory pressure on the development laptop.
+#
+# Dynamic Resource Allocation is GA as of Kubernetes v1.34, so resource.k8s.io needs no
+# feature gate on the node image pinned below.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: gpu-sim
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.36.1

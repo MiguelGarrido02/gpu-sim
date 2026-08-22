@@ -1,0 +1,23 @@
+# Build output
+/bin/
+/dist/
+*.test
+*.out
+
+# Local working state — cloned upstreams read during the audit, never committed
+/third_party/
+/.work/
+
+# Generated reports from scenario runs
+/reports/
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Local kubeconfigs and secrets
+kubeconfig
+*.kubeconfig
+.env
