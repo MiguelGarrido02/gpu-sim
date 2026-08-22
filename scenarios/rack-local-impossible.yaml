@@ -1,0 +1,37 @@
+# A job that fits the cluster but not any one rack.
+#
+# Twenty GPUs against 32 free, arranged as two racks of 16. Capacity is not the constraint —
+# without the placement requirement this would schedule immediately — which is what isolates
+# the constraint itself. A scheduler that accepted the requirement and then ignored it would
+# spread the job across both racks and, on real hardware, run every all-reduce over the slow
+# path between them.
+apiVersion: gpu-sim.io/v1alpha1
+kind: Scenario
+metadata:
+  name: rack-local-impossible
+  description: A 20-GPU rack-local gang is refused even though the cluster has 32 free GPUs.
+
+spec:
+  cluster:
+    topology: ../topologies/two-racks-h100.yaml
+    scheduler: kai
+
+  workloads:
+    - name: too-wide
+      replicas: 20
+      gpus: 1
+      gang: true
+      placement:
+        required: rack
+
+  assertions:
+    - name: no replica is placed
+      workload: too-wide
+      scheduled: none
+      settle: 45s
+
+    - name: and the scheduler blames the rack, not the cluster
+      workload: too-wide
+      # Asserting *why* is stronger than asserting *that*. A workload can stay pending for
+      # the intended reason or for an unrelated one, and only the first is a passing test.
+      unschedulableReason: "can allocate only 16 of 20"

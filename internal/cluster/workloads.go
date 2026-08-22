@@ -1,0 +1,268 @@
+package cluster
+
+import (
+	"context"
+	"fmt"
+	"sort"
+	"strings"
+
+	corev1 "k8s.io/api/core/v1"
+	resourceapi "k8s.io/api/resource/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+
+	"github.com/MiguelGarrido02/gpu-sim/internal/workload"
+)
+
+// podGroupGVR is KAI's PodGroup. Reached dynamically so gpu-sim does not depend on KAI's
+// module just to read a status message.
+var podGroupGVR = schema.GroupVersionResource{
+	Group:    "scheduling.run.ai",
+	Version:  "v2alpha2",
+	Resource: "podgroups",
+}
+
+// EnsureNamespace creates the namespace if it is missing.
+func (c *Client) EnsureNamespace(ctx context.Context, name string) error {
+	_, err := c.kube.CoreV1().Namespaces().Get(ctx, name, metav1.GetOptions{})
+	if err == nil {
+		return nil
+	}
+	if !apierrors.IsNotFound(err) {
+		return fmt.Errorf("reading namespace %s: %w", name, err)
+	}
+	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name}}
+	if _, err := c.kube.CoreV1().Namespaces().Create(ctx, ns, metav1.CreateOptions{}); err != nil {
+		return fmt.Errorf("creating namespace %s: %w", name, err)
+	}
+	return nil
+}
+
+// ClearNamespace removes everything a previous run left behind. Scenarios are hermetic, and
+// a run that measured leftovers would report a confident wrong answer.
+func (c *Client) ClearNamespace(ctx context.Context, ns string) error {
+	background := metav1.DeletePropagationBackground
+	opts := metav1.DeleteOptions{PropagationPolicy: &background}
+	all := metav1.ListOptions{}
+
+	if err := c.kube.AppsV1().Deployments(ns).DeleteCollection(ctx, opts, all); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("clearing deployments: %w", err)
+	}
+	if err := c.kube.BatchV1().Jobs(ns).DeleteCollection(ctx, opts, all); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("clearing jobs: %w", err)
+	}
+	if err := c.kube.CoreV1().Pods(ns).DeleteCollection(ctx, opts, all); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("clearing pods: %w", err)
+	}
+	if err := c.kube.ResourceV1().ResourceClaimTemplates(ns).DeleteCollection(ctx, opts, all); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("clearing claim templates: %w", err)
+	}
+	// PodGroups outlive their Job unless the owner reference catches up, and a stale one
+	// makes the next run's scheduler reasons refer to the previous workload.
+	_ = c.dynamic.Resource(podGroupGVR).Namespace(ns).DeleteCollection(ctx, opts, all)
+
+	return nil
+}
+
+// Submit creates a workload's objects.
+func (c *Client) Submit(ctx context.Context, ns string, objs *workload.Objects) error {
+	if objs.ClaimTemplate != nil {
+		if _, err := c.kube.ResourceV1().ResourceClaimTemplates(ns).Create(
+			ctx, objs.ClaimTemplate, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+			return fmt.Errorf("creating claim template: %w", err)
+		}
+	}
+	if objs.Job != nil {
+		if _, err := c.kube.BatchV1().Jobs(ns).Create(ctx, objs.Job, metav1.CreateOptions{}); err != nil {
+			return fmt.Errorf("creating job %s: %w", objs.Job.Name, err)
+		}
+	}
+	if objs.Deployment != nil {
+		if _, err := c.kube.AppsV1().Deployments(ns).Create(ctx, objs.Deployment, metav1.CreateOptions{}); err != nil {
+			return fmt.Errorf("creating deployment %s: %w", objs.Deployment.Name, err)
+		}
+	}
+	return nil
+}
+
+// WorkloadPods returns the pods belonging to a workload.
+func (c *Client) WorkloadPods(ctx context.Context, ns, name string) ([]corev1.Pod, error) {
+	list, err := c.kube.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{
+		LabelSelector: workload.LabelWorkload + "=" + name,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("listing pods for workload %s: %w", name, err)
+	}
+	return list.Items, nil
+}
+
+// AllocatedDevices returns the devices allocated to a workload's pods, by pod name.
+func (c *Client) AllocatedDevices(ctx context.Context, ns, name string) (map[string][]string, error) {
+	pods, err := c.WorkloadPods(ctx, ns, name)
+	if err != nil {
+		return nil, err
+	}
+	owned := map[string]bool{}
+	for _, pod := range pods {
+		owned[string(pod.UID)] = true
+	}
+
+	claims, err := c.kube.ResourceV1().ResourceClaims(ns).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("listing resource claims: %w", err)
+	}
+
+	byPod := map[string][]string{}
+	for _, claim := range claims.Items {
+		if claim.Status.Allocation == nil {
+			continue
+		}
+		// A claim generated from a template is owned by the pod that triggered it, which
+		// is how a claim is attributed to a workload without parsing generated names.
+		for _, ref := range claim.OwnerReferences {
+			if ref.Kind != "Pod" || !owned[string(ref.UID)] {
+				continue
+			}
+			for _, result := range claim.Status.Allocation.Devices.Results {
+				byPod[ref.Name] = append(byPod[ref.Name], result.Device)
+			}
+		}
+	}
+	return byPod, nil
+}
+
+// DeviceAttributes indexes every published device by name, with its attributes flattened to
+// strings so an assertion can compare without caring whether a value was a string or an int.
+func (c *Client) DeviceAttributes(ctx context.Context) (map[string]map[string]string, error) {
+	slices, err := c.kube.ResourceV1().ResourceSlices().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("listing resource slices: %w", err)
+	}
+
+	out := map[string]map[string]string{}
+	for _, slice := range slices.Items {
+		for _, device := range slice.Spec.Devices {
+			attrs := map[string]string{}
+			for name, value := range device.Attributes {
+				attrs[stripDomain(string(name))] = attributeString(value)
+			}
+			out[device.Name] = attrs
+		}
+	}
+	return out, nil
+}
+
+// stripDomain drops the domain prefix from a qualified attribute name so a scenario can
+// write `numaNode` whether the driver published it bare or as `gpu.nvidia.com/numaNode`.
+func stripDomain(name string) string {
+	if i := strings.LastIndex(name, "/"); i >= 0 {
+		return name[i+1:]
+	}
+	return name
+}
+
+func attributeString(v resourceapi.DeviceAttribute) string {
+	switch {
+	case v.StringValue != nil:
+		return *v.StringValue
+	case v.IntValue != nil:
+		return fmt.Sprint(*v.IntValue)
+	case v.BoolValue != nil:
+		return fmt.Sprint(*v.BoolValue)
+	case v.VersionValue != nil:
+		return *v.VersionValue
+	}
+	return ""
+}
+
+// NodeLabel returns one label value from a node.
+func (c *Client) NodeLabel(ctx context.Context, node, label string) (string, error) {
+	n, err := c.kube.CoreV1().Nodes().Get(ctx, node, metav1.GetOptions{})
+	if err != nil {
+		return "", fmt.Errorf("reading node %s: %w", node, err)
+	}
+	return n.Labels[label], nil
+}
+
+// SchedulerReasons collects the scheduler's own explanation for a workload that was not
+// placed.
+//
+// This is the whole value of a failure report. A generic "not enough resources" cost a day
+// in Phase 1; the useful text is what the scheduler itself said, and where it lives depends
+// on which scheduler ran.
+func (c *Client) SchedulerReasons(ctx context.Context, ns, name string) []string {
+	seen := map[string]bool{}
+	var reasons []string
+	add := func(msg string) {
+		msg = strings.TrimSpace(msg)
+		if msg == "" || seen[msg] {
+			return
+		}
+		seen[msg] = true
+		reasons = append(reasons, msg)
+	}
+
+	// KAI records the richest explanation on the PodGroup, broken down by topology domain.
+	if groups, err := c.dynamic.Resource(podGroupGVR).Namespace(ns).List(ctx, metav1.ListOptions{}); err == nil {
+		for _, g := range groups.Items {
+			if !strings.Contains(g.GetName(), name) {
+				continue
+			}
+			conditions, found, _ := unstructuredSlice(g.Object, "status", "schedulingConditions")
+			if !found {
+				continue
+			}
+			for _, cond := range conditions {
+				if m, ok := cond.(map[string]any); ok {
+					if msg, ok := m["message"].(string); ok {
+						add(msg)
+					}
+				}
+			}
+		}
+	}
+
+	// The default scheduler explains itself through pod events instead.
+	pods, err := c.WorkloadPods(ctx, ns, name)
+	if err == nil {
+		for _, pod := range pods {
+			if pod.Spec.NodeName != "" {
+				continue
+			}
+			for _, cond := range pod.Status.Conditions {
+				if cond.Type == corev1.PodScheduled && cond.Status == corev1.ConditionFalse {
+					add(cond.Message)
+				}
+			}
+		}
+	}
+
+	sort.Strings(reasons)
+	return reasons
+}
+
+func unstructuredSlice(obj map[string]any, path ...string) ([]any, bool, error) {
+	cur := any(obj)
+	for _, key := range path {
+		m, ok := cur.(map[string]any)
+		if !ok {
+			return nil, false, nil
+		}
+		cur, ok = m[key]
+		if !ok {
+			return nil, false, nil
+		}
+	}
+	out, ok := cur.([]any)
+	return out, ok, nil
+}
+
+// AllPods lists every pod in a namespace, including ones no workload label claims.
+func (c *Client) AllPods(ctx context.Context, ns string) ([]corev1.Pod, error) {
+	list, err := c.kube.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("listing pods in %s: %w", ns, err)
+	}
+	return list.Items, nil
+}

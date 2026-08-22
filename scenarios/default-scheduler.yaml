@@ -1,0 +1,36 @@
+# The simulated GPUs must work without KAI.
+#
+# Two of gpu-sim's three projections are plain Kubernetes: DRA ResourceSlices are core API
+# as of v1.34, and node labels are just labels. Only the scheduler topology object is KAI's.
+# Every other scenario runs through KAI, so a change that quietly coupled the device
+# attributes to it would go unnoticed until someone tried Kueue, Volcano, or no scheduler.
+#
+# Selecting a specific socket rather than any GPU is what makes this a test of the published
+# attributes rather than of DRA itself.
+apiVersion: gpu-sim.io/v1alpha1
+kind: Scenario
+metadata:
+  name: default-scheduler
+  description: The stock kube-scheduler allocates simulated GPUs and honours a CEL selector.
+
+spec:
+  cluster:
+    topology: ../topologies/two-racks-h100.yaml
+    scheduler: default
+
+  workloads:
+    - name: stock
+      replicas: 4
+      gpus: 1
+      deviceSelector: device.attributes['gpu.nvidia.com'].numaNode == 1
+
+  assertions:
+    - name: the stock scheduler places every replica
+      workload: stock
+      running: 4
+      within: 90s
+
+    - name: on the NUMA node the selector asked for
+      workload: stock
+      allocatedDevices:
+        numaNode: "1"

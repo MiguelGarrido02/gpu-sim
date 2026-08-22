@@ -1,0 +1,32 @@
+# Per-GPU attributes must be selectable, not merely published.
+#
+# The cluster has 32 GPUs, 16 of them on NUMA node 0, and this asks for 20. So a honoured
+# selector yields 16 running and 4 pending, while an ignored one yields 20 running. The gap
+# is the test: asking for fewer GPUs than NUMA 0 holds would pass either way.
+apiVersion: gpu-sim.io/v1alpha1
+kind: Scenario
+metadata:
+  name: numa-selector
+  description: A CEL selector on numaNode limits a workload to the GPUs on that socket.
+
+spec:
+  cluster:
+    topology: ../topologies/two-racks-h100.yaml
+    scheduler: kai
+
+  workloads:
+    - name: numa0-only
+      replicas: 20
+      gpus: 1
+      deviceSelector: device.attributes['gpu.nvidia.com'].numaNode == 0
+
+  assertions:
+    - name: exactly the 16 GPUs on NUMA node 0 are used
+      workload: numa0-only
+      running: 16
+      within: 90s
+
+    - name: and every allocated GPU really is on NUMA node 0
+      workload: numa0-only
+      allocatedDevices:
+        numaNode: "0"

@@ -1,12 +1,12 @@
 # Writing a cluster topology
 
 A topology file describes a GPU cluster: what machines it has, how their GPUs are wired to
-each other, and which failures take out which parts. `topology-gen` turns that one file
+each other, and which failures take out which parts. `gpu-sim` turns that one file
 into everything a scheduler needs to reason about the cluster.
 
 ```bash
-make render TOPOLOGY=topologies/two-racks-h100.yaml   # see what it would create
-make topology TOPOLOGY=topologies/two-racks-h100.yaml # create it
+gpu-sim topology render -f topologies/two-racks-h100.yaml   # see what it would create
+gpu-sim topology apply  -f topologies/two-racks-h100.yaml   # create it
 ```
 
 ## What a topology produces
@@ -75,8 +75,8 @@ compute trays behind one NVSwitch fabric, all reachable from each other at NVLin
 
 The consequence is concrete. A 32-GPU job requiring all its GPUs in one NVLink domain is
 unschedulable on the first and schedules on the second — the same workload, the same
-scheduler, a different answer. Reproducing that is `make smoke`'s job and the reason the
-project exists.
+scheduler, a different answer. Reproducing that is what `scenarios/nvlink-gang-dgx.yaml` and
+`scenarios/nvlink-gang-nvl72.yaml` do, and the reason the project exists.
 
 `faultDomain` is the blast radius: what goes down together. Several racks may share one
 when they sit behind the same power or cooling. Nothing consumes it yet beyond selection;
@@ -100,7 +100,7 @@ gpu-sim.io/topology=two-racks-h100
 ```
 
 The `kubernetes.io/*` labels are not decoration. A real kubelet registers them; a simulated
-node has no kubelet, so `topology-gen` adds them. Schedulers assume they are always
+node has no kubelet, so `gpu-sim` adds them. Schedulers assume they are always
 present — KAI drops any node missing a label for *any* level of its topology, and
 `kubernetes.io/hostname` is the conventional leaf, so omitting it empties the topology tree
 and leaves every constrained workload pending with an error about capacity on an idle
@@ -158,7 +158,7 @@ Unqualified attributes take the publishing driver's name as their domain, which 
 ones are explicitly qualified.
 
 Worked examples of all of these, each paired with a case that must *not* schedule, are in
-[`hack/smoke/`](../hack/smoke).
+[`scenarios/`](../scenarios).
 
 ## Bundled topologies
 
@@ -169,7 +169,7 @@ Worked examples of all of these, each paired with a case that must *not* schedul
 
 ## Things worth knowing
 
-**Switching topologies prunes.** `topology-gen` labels what it creates and deletes the
+**Switching topologies prunes.** `gpu-sim` labels what it creates and deletes the
 nodes and slices a previous topology left behind, so the cluster matches the file instead
 of accumulating leftovers. Only objects carrying `app.kubernetes.io/managed-by=gpu-sim` are
 ever deleted, so a real node in a mixed cluster is never at risk.

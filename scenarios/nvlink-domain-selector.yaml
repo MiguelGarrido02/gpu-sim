@@ -1,0 +1,32 @@
+# Selecting GPUs by NVLink domain — the attribute that exists nowhere else.
+#
+# NVIDIA's real DRA driver publishes no NVLink-domain attribute; fabric information reaches
+# workloads through the separate ComputeDomain/IMEX machinery. gpu-sim.io/nvlinkDomain is
+# the project's own addition, so this is the one selector with no upstream equivalent to
+# fall back on.
+apiVersion: gpu-sim.io/v1alpha1
+kind: Scenario
+metadata:
+  name: nvlink-domain-selector
+  description: A CEL selector on gpu-sim.io/nvlinkDomain confines a workload to one domain.
+
+spec:
+  cluster:
+    topology: ../topologies/two-racks-h100.yaml
+    scheduler: kai
+
+  workloads:
+    - name: one-domain
+      replicas: 12
+      gpus: 1
+      deviceSelector: device.attributes['gpu-sim.io'].nvlinkDomain == 'gpu-node-1'
+
+  assertions:
+    - name: exactly the domain's 8 GPUs are used
+      workload: one-domain
+      running: 8
+      within: 90s
+
+    - name: and every replica landed on the node owning the domain
+      workload: one-domain
+      confinedTo: nvlink-domain

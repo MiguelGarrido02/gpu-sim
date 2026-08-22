@@ -63,11 +63,11 @@ helm upgrade --install gpu-operator "${FGO_CHART}" \
 
 # --- the simulated cluster ------------------------------------------------------------
 
-# topology-gen creates the nodes, publishes their ResourceSlices with per-GPU NVLink, PCIe
+# gpu-sim creates the nodes, publishes their ResourceSlices with per-GPU NVLink, PCIe
 # and NUMA attributes, and writes the matching scheduler topology — all from the one file,
 # so the three cannot describe different clusters.
 log "Generating the simulated cluster from ${TOPOLOGY}"
-go run "${REPO_ROOT}/cmd/topology-gen" apply -f "${TOPOLOGY}" --namespace "${NAMESPACE}"
+go run "${REPO_ROOT}/cmd/gpu-sim" topology apply -f "${TOPOLOGY}" --namespace "${NAMESPACE}"
 
 log "Cluster is ready"
 kubectl get nodes -l type=kwok -o custom-columns=\

@@ -1,0 +1,36 @@
+# Half of the comparison this project exists to make possible.
+#
+# A 32-GPU job requiring every GPU in one NVLink domain. On DGX-class hardware NVLink stops
+# at the node boundary, so a domain holds 8 and the job cannot be placed at all. The
+# companion scenario, nvlink-gang-nvl72, submits the identical workload against GB200
+# NVL72 — where one domain holds 72 — and it is placed.
+#
+# Same workload, same scheduler, different hardware, answered without owning either machine.
+apiVersion: gpu-sim.io/v1alpha1
+kind: Scenario
+metadata:
+  name: nvlink-gang-dgx
+  description: A 32-GPU single-domain job does not fit DGX H100, where a domain holds 8.
+
+spec:
+  cluster:
+    topology: ../topologies/two-racks-h100.yaml
+    scheduler: kai
+
+  workloads:
+    - name: single-domain-training
+      replicas: 32
+      gpus: 1
+      gang: true
+      placement:
+        required: nvlink-domain
+
+  assertions:
+    - name: the job is refused outright
+      workload: single-domain-training
+      scheduled: none
+      settle: 45s
+
+    - name: because a DGX NVLink domain holds only 8 GPUs
+      workload: single-domain-training
+      unschedulableReason: "can allocate only 8 of 32"

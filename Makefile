@@ -20,9 +20,9 @@ cluster-down: ## Delete the local kind cluster
 install-kai: ## Install KAI Scheduler on the running cluster
 	hack/install-kai.sh
 
-.PHONY: smoke
-smoke: ## Run the smoke suite against the running cluster and assert the outcomes
-	hack/run-smoke.sh
+.PHONY: scenarios
+scenarios: ## Run the scenario suite against the running cluster
+	go run ./cmd/gpu-sim run scenarios/
 
 .PHONY: build
 build: ## Build the binaries into bin/
@@ -30,11 +30,11 @@ build: ## Build the binaries into bin/
 
 .PHONY: topology
 topology: ## Apply TOPOLOGY (default: topologies/two-racks-h100.yaml) to the running cluster
-	go run ./cmd/topology-gen apply -f $(TOPOLOGY)
+	go run ./cmd/gpu-sim topology apply -f $(TOPOLOGY)
 
 .PHONY: render
 render: ## Print the objects TOPOLOGY would create, without touching the cluster
-	go run ./cmd/topology-gen render -f $(TOPOLOGY)
+	go run ./cmd/gpu-sim topology render -f $(TOPOLOGY)
 
 .PHONY: test
 test: ## Run the unit tests

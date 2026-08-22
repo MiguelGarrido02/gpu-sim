@@ -1,0 +1,30 @@
+# The other half of gang scheduling, and the half that actually proves something.
+#
+# Placing a gang that fits proves very little: a scheduler ignoring gang semantics entirely
+# would pass that test. What distinguishes gang scheduling is the all-or-nothing guarantee,
+# so this asks for more GPUs than the cluster has and requires that *zero* replicas are
+# placed rather than a partial, deadlocked allocation.
+apiVersion: gpu-sim.io/v1alpha1
+kind: Scenario
+metadata:
+  name: gang-oversized
+  description: A gang larger than the cluster must place no replica at all.
+
+spec:
+  cluster:
+    topology: ../topologies/two-racks-h100.yaml
+    scheduler: kai
+
+  workloads:
+    - name: oversized
+      replicas: 40
+      gpus: 1
+      gang: true
+
+  assertions:
+    - name: no replica is placed
+      workload: oversized
+      scheduled: none
+      # settle, not within: the evidence is that nothing happened, so the scheduler has to
+      # be given a fair chance to act. `within` would pass instantly and prove nothing.
+      settle: 45s

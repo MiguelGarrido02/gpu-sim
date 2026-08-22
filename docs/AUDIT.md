@@ -151,7 +151,7 @@ builds this from nothing; there is no partial implementation to extend.
 
 This is the Phase 0 acceptance test, and it passes.
 
-**Positive case** ([`hack/smoke/kai-gang.yaml`](../hack/smoke/kai-gang.yaml)) — a
+**Positive case** (now [`scenarios/rack-local-training.yaml`](../scenarios/rack-local-training.yaml)) — a
 PodGroup with `minMember: 2`, two pods each claiming one GPU through a
 `ResourceClaimTemplate`:
 
@@ -166,7 +166,7 @@ Two *distinct* devices, so the allocation is real rather than a scheduler that i
 the GPU request.
 
 **Negative case**
-([`hack/smoke/kai-gang-overcapacity.yaml`](../hack/smoke/kai-gang-overcapacity.yaml)) —
+(now [`scenarios/gang-oversized.yaml`](../scenarios/gang-oversized.yaml)) —
 a 40-pod gang against a 32-GPU cluster:
 
 ```
@@ -292,7 +292,7 @@ gang size or resource requested. Every observation in the table above follows fr
 one missing label.
 
 With `kubernetes.io/hostname`, `kubernetes.io/os` and `kubernetes.io/arch` added to the
-generated nodes — a requirement `topology-gen` now enforces unconditionally — a 12-GPU gang
+generated nodes — a requirement `gpu-sim` now enforces unconditionally — a 12-GPU gang
 requiring same-rack placement is scheduled entirely inside one rack:
 
 ```
@@ -317,7 +317,7 @@ Once nodes are in the tree, other paths do report usefully: the Phase 1 negative
 back "node-group fd-1.rack-1 can allocate only 16 of 20 required pods". Propagating the
 detail in the root case too is a small, worthwhile contribution back to KAI.
 
-For Phase 1 this sets a requirement: `topology-gen` must emit the **full well-known
+For Phase 1 this sets a requirement: `gpu-sim` must emit the **full well-known
 label set** a real kubelet would register, not just the topology labels the project cares
 about. Fidelity gaps in simulated objects show up as inexplicable scheduler behaviour,
 which is exactly the failure mode gpu-sim exists to spare its users.
@@ -383,8 +383,7 @@ Ordered by how much they cost and how much they give back.
 hack/setup-cluster.sh 4        # kind + KWOK + fake-gpu-operator + 4 simulated 8-GPU nodes
 hack/install-kai.sh            # KAI Scheduler v0.17.0
 
-kubectl apply -f hack/smoke/kai-gang.yaml               # expect: 2 pods Running, 2 distinct devices
-kubectl apply -f hack/smoke/kai-gang-overcapacity.yaml  # expect: 40 pods Pending, 0 scheduled
+gpu-sim run scenarios/          # the checks below, and the rest of the suite
 ```
 
 Teardown: `make cluster-down`.

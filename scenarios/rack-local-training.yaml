@@ -1,0 +1,33 @@
+# A training job that must not be split across racks.
+#
+# Twelve GPUs is chosen deliberately: it does not fit on one node (8 GPUs), so placing it
+# requires reasoning at the rack level rather than falling back to "put it all on one
+# machine". It does fit inside one rack (16 GPUs), so a correct scheduler places it.
+apiVersion: gpu-sim.io/v1alpha1
+kind: Scenario
+metadata:
+  name: rack-local-training
+  description: A 12-GPU gang must land entirely inside one NVLink rack.
+
+spec:
+  cluster:
+    topology: ../topologies/two-racks-h100.yaml
+    scheduler: kai
+
+  workloads:
+    - name: training
+      replicas: 12
+      gpus: 1
+      gang: true
+      placement:
+        required: rack
+
+  assertions:
+    - name: every replica is placed
+      workload: training
+      scheduled: all
+      within: 90s
+
+    - name: and the job stays inside one rack
+      workload: training
+      confinedTo: rack

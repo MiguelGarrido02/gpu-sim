@@ -95,3 +95,24 @@ const (
 // DriverName is the DRA driver gpu-sim publishes under. It matches fake-gpu-operator's so
 // the operator's DeviceClass keeps selecting these devices.
 const DriverName = "gpu.nvidia.com"
+
+// levelLabels maps a topology level alias to the node label carrying it. The aliases match
+// the ones KAITopologyFor declares, so a scenario and a scheduler mean the same thing by
+// "rack".
+var levelLabels = map[string]string{
+	"fault-domain":  LabelFaultDomain,
+	"rack":          LabelRack,
+	"nvlink-domain": LabelNVLinkDomain,
+	"host":          LabelHostname,
+}
+
+// LabelForLevel resolves a topology level alias to its node label.
+func LabelForLevel(level string) (string, bool) {
+	label, ok := levelLabels[level]
+	return label, ok
+}
+
+// KnownLevels lists the level aliases, coarsest first, for error messages.
+func KnownLevels() []string {
+	return []string{"fault-domain", "rack", "nvlink-domain", "host"}
+}

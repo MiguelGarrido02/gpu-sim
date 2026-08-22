@@ -7,11 +7,10 @@ Dynamic Resource Allocation (DRA) `ResourceSlice`s and multi-node ComputeDomains
 that platform and MLOps teams can validate scheduling policies before they touch
 hardware that costs €30,000–€300,000 per node.
 
-> **Status: early development.** Phase 0 is complete: a gang-scheduled GPU workload runs
-> on a fully simulated cluster on a laptop, with no NVIDIA hardware anywhere. The
-> value-add layers are not built yet. See [`docs/PLAN.md`](docs/PLAN.md) for the roadmap
-> and [`docs/AUDIT.md`](docs/AUDIT.md) for what the underlying stack does and does not
-> provide today.
+> **Status: early development.** Topology modelling and the scenario harness work end to
+> end; MIG partitioning and fault injection do not exist yet. See
+> [`docs/PLAN.md`](docs/PLAN.md) for the roadmap and [`docs/AUDIT.md`](docs/AUDIT.md) for
+> what the underlying stack does and does not provide.
 
 ## Running the simulated cluster
 
@@ -20,7 +19,7 @@ Requires Docker (or OrbStack/Colima), `kind`, `kubectl`, `helm`, `jq` and `yq`.
 ```bash
 hack/setup-cluster.sh   # kind + KWOK + fake-gpu-operator + the topology below
 hack/install-kai.sh     # KAI Scheduler
-make smoke              # gang scheduling and topology placement, each with its negative case
+make scenarios          # run the scenario suite
 ```
 
 The cluster is described by one file. This one is two racks of two DGX H100 nodes — 32
@@ -50,15 +49,15 @@ spec:
         - { name: gpu-node-4, pool: dgx-h100 }
 ```
 
-`topology-gen` turns that into simulated nodes with topology labels, DRA `ResourceSlice`s
+`gpu-sim` turns that into simulated nodes with topology labels, DRA `ResourceSlice`s
 carrying per-GPU NVLink domain, PCIe root and NUMA node, and the scheduler's own topology
 object — all from the one file, so they cannot describe different clusters.
 [`docs/topologies.md`](docs/topologies.md) documents every field, what ends up published,
 and how to write policies against it.
 
 ```bash
-make render                             # see the objects without touching the cluster
-make topology TOPOLOGY=path/to/file.yaml
+gpu-sim topology render -f topologies/gb200-nvl72.yaml   # preview, no cluster changes
+gpu-sim topology apply  -f topologies/gb200-nvl72.yaml
 ```
 
 Switching topologies removes the nodes and slices the previous one created, so the cluster
@@ -76,11 +75,22 @@ against two topologies:
 | `two-racks-h100` | 8 GPUs (per node) | refused — not one pod placed |
 | `gb200-nvl72` | 72 GPUs (per rack) | placed across 8 trays, one domain |
 
+Both are scenarios, so the comparison is one command:
+
 ```
-$ make topology TOPOLOGY=topologies/gb200-nvl72.yaml
-applied 18 nodes
-applied 18 ResourceSlices covering 72 GPUs
-removed 8 objects no longer in the topology
+$ gpu-sim run scenarios/nvlink-gang-dgx.yaml scenarios/nvlink-gang-nvl72.yaml
+
+==> nvlink-gang-dgx
+    cluster two-racks-h100 · 4 nodes · 32 GPUs · scheduler kai
+  PASS the job is refused outright
+  PASS because a DGX NVLink domain holds only 8 GPUs
+       the scheduler said: node-group fd-1.rack-1.gpu-node-1 can allocate only 8 of 32 required pods
+
+==> nvlink-gang-nvl72
+    cluster gb200-nvl72 · 18 nodes · 72 GPUs · scheduler kai
+  PASS every replica is placed
+  PASS and the whole job stays inside one NVLink domain
+       all 32 placed replicas are in nvlink-domain "nvl72-1"
 ```
 
 Same workload, same scheduler, different hardware — answered on a laptop, without owning

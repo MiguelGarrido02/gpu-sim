@@ -1,0 +1,33 @@
+# The other half: the identical workload on GB200 NVL72.
+#
+# One NVLink domain spans the whole rack — 72 GPUs across 18 compute trays — so the 32-GPU
+# job that DGX H100 refuses is placed here, spread across several trays but never leaving
+# the domain. The two topology files differ by a single field.
+apiVersion: gpu-sim.io/v1alpha1
+kind: Scenario
+metadata:
+  name: nvlink-gang-nvl72
+  description: The same 32-GPU single-domain job fits GB200 NVL72, where one domain holds 72.
+
+spec:
+  cluster:
+    topology: ../topologies/gb200-nvl72.yaml
+    scheduler: kai
+
+  workloads:
+    - name: single-domain-training
+      replicas: 32
+      gpus: 1
+      gang: true
+      placement:
+        required: nvlink-domain
+
+  assertions:
+    - name: every replica is placed
+      workload: single-domain-training
+      scheduled: all
+      within: 120s
+
+    - name: and the whole job stays inside one NVLink domain
+      workload: single-domain-training
+      confinedTo: nvlink-domain
