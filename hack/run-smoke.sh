@@ -144,6 +144,27 @@ else
   fail "12 pods selecting one NVLink domain get exactly its 8 GPUs (got ${nvlink_running})"
 fi
 
+# --- portability ------------------------------------------------------------------------
+
+head "Stock kube-scheduler"
+reset_namespace
+kubectl apply -f "${SMOKE}/default-scheduler.yaml" >/dev/null
+phase=""
+for _ in $(seq 1 $((TIMEOUT / 3))); do
+  phase=$(kubectl get pod default-scheduler-gpu -n "${NS}" -o jsonpath='{.status.phase}' 2>/dev/null)
+  [ "${phase}" = "Running" ] && break
+  sleep 3
+done
+allocated=$(kubectl get resourceclaims -n "${NS}" -o json |
+  jq -r '[.items[] | select(.status.allocation != null) | .status.allocation.devices.results[0].device] | first // ""')
+numa=$(kubectl get resourceslices -o json |
+  jq -r --arg d "${allocated}" '[.items[].spec.devices[] | select(.name==$d) | .attributes.numaNode.int] | first // ""')
+if [ "${phase}" = "Running" ] && [ "${numa}" = "1" ]; then
+  pass "the stock kube-scheduler allocates a GPU on the NUMA node the selector asked for"
+else
+  fail "the stock kube-scheduler allocates a GPU on the NUMA node the selector asked for"
+fi
+
 reset_namespace
 
 # --- result ------------------------------------------------------------------------------
