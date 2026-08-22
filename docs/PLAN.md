@@ -310,6 +310,13 @@ orchestrating fake-gpu-operator + topology-gen.
 
 ### Phase 2 — MIG fragmentation engine (weeks 6–8)
 
+> **Reordered after Phase 1.** Phase 3 is being built first. Phase 2's own acceptance test —
+> "submit 20 workloads with mixed MIG profiles and verify fragmentation grows" — is itself a
+> scenario, and cannot be run properly without the harness Phase 3 provides; the steps below
+> already concede this by calling for integration with it. Phase 3 also multiplies the value
+> of what Phase 1 already built, without depending on anything new. The design work for
+> Phase 2 is complete and waiting in [`designs/mig-model.md`](designs/mig-model.md).
+
 **Goal:** simulate MIG partitioning with mixed profiles and report fragmentation.
 
 **Technical context:** MIG (Multi-Instance GPU) partitions a GPU (A100, H100, H200) into
