@@ -8,12 +8,21 @@ help: ## Show the available targets
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
 
 .PHONY: cluster-up
-cluster-up: ## Create the local kind cluster
-	kind create cluster --config $(KIND_CONFIG)
+cluster-up: ## Create the kind cluster with KWOK, fake-gpu-operator and simulated GPU nodes
+	hack/setup-cluster.sh
 
 .PHONY: cluster-down
 cluster-down: ## Delete the local kind cluster
 	kind delete cluster --name $(CLUSTER_NAME)
+
+.PHONY: install-kai
+install-kai: ## Install KAI Scheduler on the running cluster
+	hack/install-kai.sh
+
+.PHONY: smoke
+smoke: ## Run the Phase 0 smoke tests against the running cluster
+	kubectl apply -f hack/smoke/kai-gang.yaml
+	kubectl apply -f hack/smoke/kai-gang-overcapacity.yaml
 
 .PHONY: build
 build: ## Build the gpu-sim binary into bin/

@@ -7,8 +7,23 @@ Dynamic Resource Allocation (DRA) `ResourceSlice`s and multi-node ComputeDomains
 that platform and MLOps teams can validate scheduling policies before they touch
 hardware that costs €30,000–€300,000 per node.
 
-> **Status: early development (Phase 0).** Nothing here is usable yet. See
-> [`docs/PLAN.md`](docs/PLAN.md) for the roadmap.
+> **Status: early development.** Phase 0 is complete: a gang-scheduled GPU workload runs
+> on a fully simulated cluster on a laptop, with no NVIDIA hardware anywhere. The
+> value-add layers are not built yet. See [`docs/PLAN.md`](docs/PLAN.md) for the roadmap
+> and [`docs/AUDIT.md`](docs/AUDIT.md) for what the underlying stack does and does not
+> provide today.
+
+## Running the simulated cluster
+
+Requires Docker (or OrbStack/Colima), `kind`, `kubectl`, `helm`, `jq` and `yq`.
+
+```bash
+hack/setup-cluster.sh 4   # kind + KWOK + fake-gpu-operator + 4 simulated 8-GPU H100 nodes
+hack/install-kai.sh       # KAI Scheduler
+make smoke                # gang scheduling, positive and negative cases
+```
+
+Tear it down with `make cluster-down`.
 
 ## Why
 

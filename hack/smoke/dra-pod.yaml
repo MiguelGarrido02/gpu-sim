@@ -1,0 +1,43 @@
+# Phase 0 smoke test: a single pod claiming one simulated GPU through DRA.
+#
+# Success means the ResourceClaim is allocated from a simulated ResourceSlice and the
+# pod reaches Running on a KWOK node — proving the whole chain works end to end:
+# topology ConfigMap -> kwok-dra-plugin -> ResourceSlice -> scheduler -> KWOK.
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaimTemplate
+metadata:
+  name: single-gpu
+  namespace: default
+spec:
+  spec:
+    devices:
+      requests:
+        - name: gpu
+          exactly:
+            deviceClassName: gpu.nvidia.com
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: dra-smoke
+  namespace: default
+spec:
+  # Simulated nodes carry a NoSchedule taint so that real workloads never land on them
+  # by accident; anything meant for the simulation has to opt in explicitly.
+  nodeSelector:
+    type: kwok
+  tolerations:
+    - key: kwok.x-k8s.io/node
+      operator: Equal
+      value: fake
+      effect: NoSchedule
+  containers:
+    - name: main
+      image: ubuntu:24.04
+      command: ["sleep", "infinity"]
+      resources:
+        claims:
+          - name: gpu
+  resourceClaims:
+    - name: gpu
+      resourceClaimTemplateName: single-gpu

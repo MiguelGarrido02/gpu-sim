@@ -1,0 +1,84 @@
+# Helm values for the upstream fake-gpu-operator, tuned for the gpu-sim development
+# cluster: every GPU node is a KWOK node, and allocation goes through DRA rather than
+# the legacy device plugin.
+#
+# Components deliberately left off:
+#   devicePlugin        - per-node DaemonSet; KWOK nodes have no kubelet to register with.
+#   kwokGpuDevicePlugin - publishes the legacy `nvidia.com/gpu` extended resource for KWOK
+#                         nodes. Redundant here: the DeviceClass shipped with the DRA path
+#                         declares `extendedResourceName: nvidia.com/gpu`, so the scheduler
+#                         maps that request onto DRA devices by itself on Kubernetes v1.34+.
+#   migFaker            - operates on real nodes through the device-plugin path.
+#   runtimeClass        - cluster-scoped RuntimeClass, unnecessary for scheduling tests.
+#   computeDomain*      - ComputeDomain simulation; enabled in a later phase.
+
+environment:
+  openshift: false
+  resourceReservationNamespace: runai-reservation
+
+# Publishes the gpu.nvidia.com DeviceClass. Its kubeletplugin DaemonSet targets nodes
+# labelled nvidia.com/gpu.deploy.dra-plugin-gpu=true, of which we have none, so it stays
+# at zero replicas and only the DeviceClass is contributed.
+draPlugin:
+  enabled: true
+
+# Watches nodes carrying the node-pool label and writes one topology ConfigMap per node.
+statusUpdater:
+  enabled: true
+
+# Serves the topology to the DRA plugin and to the simulated nvidia-smi.
+topologyServer:
+  enabled: true
+
+topologyConfigMap:
+  enabled: true
+
+# Turns each topology ConfigMap into a ResourceSlice for its KWOK node. This is the
+# component gpu-sim extends in Phase 1.
+kwokDraPlugin:
+  enabled: true
+
+# NodeResourceTopology publishing, which KAI Scheduler reads for NUMA-aware placement.
+statusExporter:
+  enabled: true
+  nodeResourceTopology:
+    enabled: true
+    installCRD: true
+
+devicePlugin:
+  enabled: false
+kwokGpuDevicePlugin:
+  enabled: false
+migFaker:
+  enabled: false
+runtimeClass:
+  enabled: false
+gpuOperator:
+  enabled: false
+computeDomainDraPlugin:
+  enabled: false
+kwokComputeDomainDraPlugin:
+  enabled: false
+
+builtinProfiles:
+  enabled: true
+
+# Profile-based topology (the `cluster:` key), which resolves GPU product, memory and
+# device count from the builtin profile ConfigMaps synced from NVIDIA/k8s-test-infra.
+cluster:
+  nodePoolLabelKey: run.ai/simulated-gpu-node-pool
+  migStrategy: none
+  nodePools:
+    default:
+      gpu:
+        backend: fake
+        profile: h100
+        overrides:
+          device_count: 8
+      # A DGX H100 exposes two NUMA zones with four GPUs each.
+      numa:
+        zones: 2
+        gpusPerZone: [4, 4]
+        distances:
+          self: 10
+          remote: 21

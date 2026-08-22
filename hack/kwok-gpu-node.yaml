@@ -1,0 +1,43 @@
+# Template for a simulated GPU node. NODE_NAME and NODE_POOL are substituted by
+# hack/setup-cluster.sh.
+#
+# The kwok.x-k8s.io/node annotation hands the node's lifecycle to the KWOK controller,
+# and the matching taint keeps real DaemonSets off it — simulated nodes have no kubelet,
+# so anything landing there without a toleration would hang in Pending forever.
+#
+# The run.ai/simulated-gpu-node-pool label is what makes fake-gpu-operator's
+# status-updater adopt the node and assign it the GPU configuration of that pool.
+apiVersion: v1
+kind: Node
+metadata:
+  name: NODE_NAME
+  annotations:
+    kwok.x-k8s.io/node: fake
+    node.alpha.kubernetes.io/ttl: "0"
+  labels:
+    type: kwok
+    kubernetes.io/role: worker
+    node.kubernetes.io/instance-type: gpu-node
+    run.ai/simulated-gpu-node-pool: NODE_POOL
+spec:
+  taints:
+    - key: kwok.x-k8s.io/node
+      value: fake
+      effect: NoSchedule
+status:
+  allocatable:
+    cpu: "128"
+    memory: 2Ti
+    pods: "110"
+  capacity:
+    cpu: "128"
+    memory: 2Ti
+    pods: "110"
+  nodeInfo:
+    architecture: amd64
+    containerRuntimeVersion: fake
+    kernelVersion: fake
+    kubeProxyVersion: fake
+    kubeletVersion: fake
+    operatingSystem: linux
+    osImage: fake
