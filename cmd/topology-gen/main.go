@@ -141,5 +141,22 @@ func apply(ctx context.Context, client *cluster.Client, resolved *topology.Resol
 	}
 	fmt.Printf("applied Topology %q with %d levels\n", kaiTopology.Metadata.Name, len(kaiTopology.Spec.Levels))
 
+	// Pruning comes last so that a failure earlier on leaves the previous cluster intact
+	// rather than a half-deleted one.
+	keep := make(map[string]bool, len(nodes))
+	for _, node := range nodes {
+		keep[node.Name] = true
+	}
+	removed, err := client.Prune(ctx, keep)
+	if err != nil {
+		return err
+	}
+	if len(removed) > 0 {
+		fmt.Printf("removed %d objects no longer in the topology:\n", len(removed))
+		for _, name := range removed {
+			fmt.Printf("  %s\n", name)
+		}
+	}
+
 	return nil
 }

@@ -59,7 +59,31 @@ make render                             # see the objects without touching the c
 make topology TOPOLOGY=path/to/file.yaml
 ```
 
+Switching topologies removes the nodes and slices the previous one created, so the cluster
+always matches the file rather than accumulating leftovers.
+
 Tear it down with `make cluster-down`.
+
+## What it is for
+
+A 32-GPU training job that requires all its GPUs in one NVLink domain, submitted unchanged
+against two topologies:
+
+| Topology | NVLink domain | Result |
+|---|---|---|
+| `two-racks-h100` | 8 GPUs (per node) | refused — not one pod placed |
+| `gb200-nvl72` | 72 GPUs (per rack) | placed across 8 trays, one domain |
+
+```
+$ make topology TOPOLOGY=topologies/gb200-nvl72.yaml
+applied 18 nodes
+applied 18 ResourceSlices covering 72 GPUs
+removed 8 objects no longer in the topology
+```
+
+Same workload, same scheduler, different hardware — answered on a laptop, without owning
+either machine. On real hardware the difference between those two rows is roughly €2M of
+rack.
 
 ## Why
 

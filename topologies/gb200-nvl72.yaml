@@ -1,0 +1,49 @@
+# A single GB200 NVL72 rack: 72 GPUs in one NVLink domain.
+#
+# The hardware is 18 compute trays of two Grace-Blackwell superchips, four GPUs each, all
+# behind the rack's NVSwitch fabric. The distinguishing property is that NVLink does not
+# stop at the node boundary — one domain spans all 18 nodes — which is what `nvlinkDomain`
+# at rack level expresses. It is the only line separating this file from the DGX topology
+# in two-racks-h100.yaml.
+#
+# What that buys, and what makes this worth simulating: a 32-GPU job requiring all its
+# GPUs in one NVLink domain is unschedulable on DGX H100, where a domain holds 8, and
+# schedules here, where one holds 72. Same workload, same scheduler, different hardware —
+# and the difference is visible without owning either machine.
+apiVersion: gpu-sim.io/v1alpha1
+kind: ClusterTopology
+metadata:
+  name: gb200-nvl72
+spec:
+  nodePools:
+    gb200-tray:
+      profile: gb200
+      # Four GPUs per compute tray: two superchips, two GPUs each.
+      gpuCount: 4
+      nvlink: full-mesh
+
+  racks:
+    - name: nvl72-rack-1
+      faultDomain: fd-1
+      # NVLink spans the whole rack. Everything else in this project follows from this
+      # one field being set.
+      nvlinkDomain: nvl72-1
+      nodes:
+        - { name: nvl72-tray-01, pool: gb200-tray }
+        - { name: nvl72-tray-02, pool: gb200-tray }
+        - { name: nvl72-tray-03, pool: gb200-tray }
+        - { name: nvl72-tray-04, pool: gb200-tray }
+        - { name: nvl72-tray-05, pool: gb200-tray }
+        - { name: nvl72-tray-06, pool: gb200-tray }
+        - { name: nvl72-tray-07, pool: gb200-tray }
+        - { name: nvl72-tray-08, pool: gb200-tray }
+        - { name: nvl72-tray-09, pool: gb200-tray }
+        - { name: nvl72-tray-10, pool: gb200-tray }
+        - { name: nvl72-tray-11, pool: gb200-tray }
+        - { name: nvl72-tray-12, pool: gb200-tray }
+        - { name: nvl72-tray-13, pool: gb200-tray }
+        - { name: nvl72-tray-14, pool: gb200-tray }
+        - { name: nvl72-tray-15, pool: gb200-tray }
+        - { name: nvl72-tray-16, pool: gb200-tray }
+        - { name: nvl72-tray-17, pool: gb200-tray }
+        - { name: nvl72-tray-18, pool: gb200-tray }

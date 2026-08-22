@@ -20,7 +20,7 @@ import (
 func ResourceSlices(resolved *topology.Resolved) []*resourceapi.ResourceSlice {
 	slices := make([]*resourceapi.ResourceSlice, 0, len(resolved.Nodes))
 	for _, rn := range resolved.Nodes {
-		slices = append(slices, resourceSlice(rn))
+		slices = append(slices, resourceSlice(rn, resolved.Name))
 	}
 	return slices
 }
@@ -32,7 +32,7 @@ func SliceName(nodeName string) string {
 	return fmt.Sprintf("kwok-%s-gpu", nodeName)
 }
 
-func resourceSlice(rn topology.ResolvedNode) *resourceapi.ResourceSlice {
+func resourceSlice(rn topology.ResolvedNode, topologyName string) *resourceapi.ResourceSlice {
 	devices := make([]resourceapi.Device, 0, len(rn.GPUs))
 	for _, gpu := range rn.GPUs {
 		devices = append(devices, device(rn, gpu))
@@ -41,8 +41,12 @@ func resourceSlice(rn topology.ResolvedNode) *resourceapi.ResourceSlice {
 	return &resourceapi.ResourceSlice{
 		TypeMeta: metav1.TypeMeta{APIVersion: resourceapi.SchemeGroupVersion.String(), Kind: "ResourceSlice"},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:   SliceName(rn.Name),
-			Labels: map[string]string{LabelRack: rn.Rack},
+			Name: SliceName(rn.Name),
+			Labels: map[string]string{
+				LabelRack:      rn.Rack,
+				LabelManagedBy: ManagedByValue,
+				LabelTopology:  topologyName,
+			},
 		},
 		Spec: resourceapi.ResourceSliceSpec{
 			Driver:   DriverName,

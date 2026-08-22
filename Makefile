@@ -21,13 +21,8 @@ install-kai: ## Install KAI Scheduler on the running cluster
 	hack/install-kai.sh
 
 .PHONY: smoke
-smoke: ## Run the smoke tests against the running cluster
-	kubectl apply -f hack/smoke/kai-gang.yaml
-	kubectl apply -f hack/smoke/kai-gang-overcapacity.yaml
-	kubectl apply -f hack/smoke/topology-placement.yaml
-	kubectl apply -f hack/smoke/topology-placement-impossible.yaml
-	kubectl apply -f hack/smoke/device-selector-numa.yaml
-	kubectl apply -f hack/smoke/device-selector-nvlink.yaml
+smoke: ## Run the smoke suite against the running cluster and assert the outcomes
+	hack/run-smoke.sh
 
 .PHONY: build
 build: ## Build the binaries into bin/

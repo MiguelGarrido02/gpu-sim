@@ -23,7 +23,21 @@ const (
 	// on it, and it pairs with the KWOK taint that keeps everything else off.
 	LabelKWOKType = "type"
 	KWOKTypeValue = "kwok"
+
+	// LabelManagedBy marks an object as gpu-sim's own. Switching topologies has to
+	// remove the objects the previous one created, or a cluster ends up describing two
+	// machines at once, and this label is what makes that deletion safe: nothing without
+	// it is ever touched, so a real node in a mixed cluster cannot be caught by it.
+	LabelManagedBy = "app.kubernetes.io/managed-by"
+	ManagedByValue = "gpu-sim"
+
+	// LabelTopology records which topology document an object came from, so a cluster
+	// can be traced back to the file that produced it.
+	LabelTopology = "gpu-sim.io/topology"
 )
+
+// ManagedSelector matches every object gpu-sim created.
+const ManagedSelector = LabelManagedBy + "=" + ManagedByValue
 
 // Well-known labels every real kubelet registers when a node joins. A simulated node has
 // no kubelet, so nothing else would add them.

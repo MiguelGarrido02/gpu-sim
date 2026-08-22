@@ -32,15 +32,17 @@ var nodeCapacity = corev1.ResourceList{
 func Nodes(resolved *topology.Resolved) []*corev1.Node {
 	nodes := make([]*corev1.Node, 0, len(resolved.Nodes))
 	for _, rn := range resolved.Nodes {
-		nodes = append(nodes, node(rn))
+		nodes = append(nodes, node(rn, resolved.Name))
 	}
 	return nodes
 }
 
-func node(rn topology.ResolvedNode) *corev1.Node {
+func node(rn topology.ResolvedNode, topologyName string) *corev1.Node {
 	labels := map[string]string{
-		LabelKWOKType: KWOKTypeValue,
-		LabelNodePool: rn.Pool,
+		LabelKWOKType:  KWOKTypeValue,
+		LabelNodePool:  rn.Pool,
+		LabelManagedBy: ManagedByValue,
+		LabelTopology:  topologyName,
 
 		LabelHostname: rn.Name,
 		LabelOS:       "linux",

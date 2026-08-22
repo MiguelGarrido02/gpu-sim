@@ -167,6 +167,55 @@ func (c *Client) ApplyResourceSlice(ctx context.Context, slice *resourceapi.Reso
 	return nil
 }
 
+// Prune deletes the simulated nodes and ResourceSlices gpu-sim created that the current
+// topology no longer describes, and reports what it removed.
+//
+// Switching between topology files without this leaves the cluster describing two machines
+// at once — the old nodes keep their labels and their GPUs, and a scheduler happily places
+// work on hardware the topology file says does not exist.
+//
+// Only objects carrying gpu-sim's managed-by label are considered, so a real node in a
+// mixed cluster, or a simulated node someone created by hand, is never touched.
+func (c *Client) Prune(ctx context.Context, keepNodes map[string]bool) ([]string, error) {
+	var removed []string
+
+	slices, err := c.kube.ResourceV1().ResourceSlices().List(ctx, metav1.ListOptions{
+		LabelSelector: generate.ManagedSelector,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("listing managed ResourceSlices: %w", err)
+	}
+	// Slices go first: deleting a node while its slice still advertises GPUs would
+	// briefly leave the scheduler seeing devices on a node that no longer exists.
+	for _, slice := range slices.Items {
+		if slice.Spec.NodeName != nil && keepNodes[*slice.Spec.NodeName] {
+			continue
+		}
+		if err := c.kube.ResourceV1().ResourceSlices().Delete(ctx, slice.Name, metav1.DeleteOptions{}); err != nil {
+			return removed, fmt.Errorf("deleting ResourceSlice %s: %w", slice.Name, err)
+		}
+		removed = append(removed, "resourceslice/"+slice.Name)
+	}
+
+	nodes, err := c.kube.CoreV1().Nodes().List(ctx, metav1.ListOptions{
+		LabelSelector: generate.ManagedSelector,
+	})
+	if err != nil {
+		return removed, fmt.Errorf("listing managed nodes: %w", err)
+	}
+	for _, node := range nodes.Items {
+		if keepNodes[node.Name] {
+			continue
+		}
+		if err := c.kube.CoreV1().Nodes().Delete(ctx, node.Name, metav1.DeleteOptions{}); err != nil {
+			return removed, fmt.Errorf("deleting node %s: %w", node.Name, err)
+		}
+		removed = append(removed, "node/"+node.Name)
+	}
+
+	return removed, nil
+}
+
 // ApplyKAITopology creates or updates the scheduler's topology object.
 func (c *Client) ApplyKAITopology(ctx context.Context, topo *generate.KAITopology) error {
 	raw, err := runtime.DefaultUnstructuredConverter.ToUnstructured(topo)
