@@ -225,6 +225,25 @@ project's primary scheduler under test cannot exercise MIG. This is worth report
 upstream, and gpu-sim is the reproducer — which is the tool doing exactly what it exists
 for: finding a real scheduler gap on a laptop, with no hardware.
 
+## What stage C found: fragmentation needs churn
+
+The upstream DRA allocator **packs**. Given a homogeneous sequence of partition requests it
+fills each GPU from the lowest free placement upward, so a run of small partitions produces
+tightly packed GPUs and zero fragmentation. Measured on the simulated cluster: 24 × 1g.10gb
+followed by 12 × 2g.20gb across sixteen GPUs left every GPU either full or untouched, and
+nothing lost.
+
+Fragmentation therefore does not arise from arrival order alone, as the design assumed. It
+arises from **churn** — partitions being released out of the order they were taken, leaving
+holes a later request cannot use. The design's worked example (four small partitions at
+offsets 0, 2, 4 and 6) is a state reachable by releasing, not by allocating.
+
+That is a real correction to this document's premise, and it reshapes stage D. The
+acceptance test cannot be "submit twenty workloads and watch fragmentation grow"; it has to
+submit *and retire* them. The scenario harness has no way to retire a workload mid-run
+today, so stage D needs that first — which is also what Phase 4's fault injection will need,
+so the two share the mechanism.
+
 ## Stage C consequences
 
 1. A profile geometry table, with the max-instances invariant as a unit test.

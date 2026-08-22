@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -34,6 +35,7 @@ Usage:
   gpu-sim topology apply  -f <topology.yaml>   make the cluster match a topology
   gpu-sim topology render -f <topology.yaml>   print the objects without applying them
   gpu-sim run <scenario.yaml | directory>      run one scenario or a whole suite
+  gpu-sim fragmentation                        report MIG capacity that is free but unreachable
 
 Flags:
       --namespace    namespace holding the GPU profiles (default "gpu-operator")
@@ -67,6 +69,8 @@ func run(args []string) error {
 		return topologyCmd(ctx, args[1:])
 	case "run":
 		return runCmd(ctx, args[1:])
+	case "fragmentation":
+		return fragmentationCmd(ctx, args[1:])
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 		return nil
@@ -297,4 +301,70 @@ func splitFlags(args []string) (flags, positional []string) {
 		}
 	}
 	return flags, positional
+}
+
+// fragmentationCmd reports, per GPU, how much capacity is free but unreachable.
+//
+// Fragmentation is always relative to a profile: a GPU can be perfectly usable for small
+// partitions and useless for large ones at the same instant, so the table is per profile
+// and the headline is the largest partition still allocatable.
+func fragmentationCmd(ctx context.Context, args []string) error {
+	var flags commonFlags
+	fs := flag.NewFlagSet("fragmentation", flag.ContinueOnError)
+	flags.bind(fs)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	client, err := cluster.New(flags.kubeconfig, flags.namespace)
+	if err != nil {
+		return err
+	}
+
+	nodes, err := client.Fragmentation(ctx)
+	if err != nil {
+		return err
+	}
+	if len(nodes) == 0 {
+		return errors.New("no MIG-enabled nodes found; apply a topology with mig.enabled first")
+	}
+
+	if flags.jsonPath != "" {
+		f, err := os.Create(flags.jsonPath)
+		if err != nil {
+			return fmt.Errorf("creating JSON report: %w", err)
+		}
+		defer f.Close()
+		enc := json.NewEncoder(f)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(nodes); err != nil {
+			return err
+		}
+	}
+
+	total := 0
+	for _, node := range nodes {
+		fmt.Printf("\n%s\n", node.Node)
+		for _, gpu := range node.GPUs {
+			largest := gpu.LargestAllocatable
+			if largest == "" {
+				largest = "nothing"
+			}
+			fmt.Printf("  GPU %d   %d memory slices free, %d SM slices free   largest allocatable: %s\n",
+				gpu.GPUIndex, gpu.FreeMemorySlices, gpu.FreeSMSlices, largest)
+
+			for _, fit := range gpu.Profiles {
+				if fit.Lost == 0 {
+					continue
+				}
+				fmt.Printf("      %-10s could hold %d, holds %d  -> %d lost to fragmentation\n",
+					fit.Profile, fit.Ideal, fit.Actual, fit.Lost)
+			}
+		}
+		fmt.Printf("  %d partitions lost to fragmentation on this node\n", node.TotalLost())
+		total += node.TotalLost()
+	}
+	fmt.Printf("\n%d partitions lost to fragmentation in total\n\n", total)
+
+	return nil
 }

@@ -40,6 +40,15 @@ func (c *Client) ApplyTopology(ctx context.Context, path string) (*TopologyResul
 		}
 	}
 
+	// Checked after the nodes exist, since the probe names one, and before any slice is
+	// published, so a cluster that cannot store counters is refused rather than filled
+	// with partitions it would treat as independently allocatable.
+	if resolvedHasMIG(resolved) {
+		if err := c.CheckPartitionableDevices(ctx, nodes[0].Name); err != nil {
+			return nil, err
+		}
+	}
+
 	// Slices come second: a slice names its node, and publishing one for a node that does
 	// not exist yet leaves the scheduler briefly seeing GPUs nowhere.
 	slices := generate.ResourceSlices(resolved)
