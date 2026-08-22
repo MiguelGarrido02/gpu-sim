@@ -357,15 +357,19 @@ Ordered by how much they cost and how much they give back.
 
 5. **`ResourceSlice` ownership.** `kwok-dra-plugin` reconciles the whole slice from the
    topology ConfigMap on every change, overwriting it. gpu-sim cannot simply patch
-   attributes onto the slices from a sidecar — they would be reverted. Phase 1 must
-   either fork this component or feed it through the topology ConfigMap it already
-   reads. **The ConfigMap is the seam**, and it is a far cleaner integration point than
-   a fork.
+   attributes onto the slices from a sidecar — they would be reverted.
 
-Point 5 also settles the strategic question `PLAN.md` left open. Option B (consume
-upstream, extend around it) remains viable specifically because the topology ConfigMap
-is a supported input we can write to. A fork of `kwok-dra-plugin` stays the fallback if
-per-device attributes turn out not to fit through that seam.
+   The obvious alternative is to feed data through the topology ConfigMap that
+   `kwok-dra-plugin` already reads, and `status-updater` does leave an existing ConfigMap
+   alone when creating. **That does not work either**, as stage B of Phase 1 established:
+   `status-updater`'s *pod* handler server-side-applies the whole `NodeTopology` struct
+   back into the ConfigMap with `Force: true` on every GPU pod event, and since the
+   payload is one opaque YAML string there is no field-level merge to protect extra data.
+   Anything gpu-sim wrote there would survive until the first pod was scheduled.
+
+   The resolution — gpu-sim publishing its own `ResourceSlice`s from its own topology
+   resource, with `kwokDraPlugin` disabled — is argued in
+   [`designs/topology-model.md`](designs/topology-model.md).
 
 ## 10. Reproducing this
 
