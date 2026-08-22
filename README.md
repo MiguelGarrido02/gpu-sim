@@ -53,6 +53,8 @@ spec:
 `topology-gen` turns that into simulated nodes with topology labels, DRA `ResourceSlice`s
 carrying per-GPU NVLink domain, PCIe root and NUMA node, and the scheduler's own topology
 object — all from the one file, so they cannot describe different clusters.
+[`docs/topologies.md`](docs/topologies.md) documents every field, what ends up published,
+and how to write policies against it.
 
 ```bash
 make render                             # see the objects without touching the cluster
