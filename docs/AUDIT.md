@@ -291,9 +291,9 @@ and every domain therefore reported zero capacity — regardless of level, const
 gang size or resource requested. Every observation in the table above follows from that
 one missing label.
 
-With `kubernetes.io/hostname`, `kubernetes.io/os` and `kubernetes.io/arch` added to
-[`hack/kwok-gpu-node.yaml`](../hack/kwok-gpu-node.yaml), a 12-GPU gang requiring
-same-rack placement is scheduled entirely inside one rack:
+With `kubernetes.io/hostname`, `kubernetes.io/os` and `kubernetes.io/arch` added to the
+generated nodes — a requirement `topology-gen` now enforces unconditionally — a 12-GPU gang
+requiring same-rack placement is scheduled entirely inside one rack:
 
 ```
 gpu-node-1: 6
@@ -306,10 +306,16 @@ That is the Phase 1 acceptance test, passing on a fully simulated cluster.
 **The lesson generalises well beyond this bug, and it is the project's thesis in
 miniature.** The simulation failed not because it modelled GPUs badly, but because a
 simulated node was subtly *less complete* than a real one in a way no error message
-pointed at. KAI's diagnostics made it worse: `checkJobDomainFit` produces a precise
-per-resource error, and `subSetNodesFn` discards it in favour of the generic "not enough
-resources in the cluster to allocate the job". Surfacing that detail is a small,
-worthwhile contribution back to KAI.
+pointed at.
+
+KAI's diagnostics made it worse, though narrowly. `checkJobDomainFit` builds a precise
+per-resource error and `subSetNodesFn` discards it, substituting a generic message. That
+only bites when the failing domain is the root — which is exactly the case here, because an
+empty tree collapses every lookup to the root, and "not enough resources in the cluster"
+was the least useful thing the scheduler could have said about a completely idle cluster.
+Once nodes are in the tree, other paths do report usefully: the Phase 1 negative test gets
+back "node-group fd-1.rack-1 can allocate only 16 of 20 required pods". Propagating the
+detail in the root case too is a small, worthwhile contribution back to KAI.
 
 For Phase 1 this sets a requirement: `topology-gen` must emit the **full well-known
 label set** a real kubelet would register, not just the topology labels the project cares

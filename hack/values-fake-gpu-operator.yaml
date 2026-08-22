@@ -33,10 +33,16 @@ topologyServer:
 topologyConfigMap:
   enabled: true
 
-# Turns each topology ConfigMap into a ResourceSlice for its KWOK node. This is the
-# component gpu-sim extends in Phase 1.
+# Turns each topology ConfigMap into a ResourceSlice for its KWOK node, with five
+# attributes per GPU and nothing positional, so every GPU on a node is indistinguishable
+# from every other one.
+#
+# gpu-sim publishes the slices itself instead, adding NVLink domain, PCIe root, NUMA node
+# and fault domain per GPU. Leaving both enabled would have them overwrite each other's
+# slices. See docs/designs/topology-model.md for why gpu-sim owns this rather than
+# extending or forking the plugin.
 kwokDraPlugin:
-  enabled: true
+  enabled: false
 
 # NodeResourceTopology publishing, which KAI Scheduler reads for NUMA-aware placement.
 statusExporter:

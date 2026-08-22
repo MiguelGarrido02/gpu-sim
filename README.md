@@ -18,9 +18,45 @@ hardware that costs €30,000–€300,000 per node.
 Requires Docker (or OrbStack/Colima), `kind`, `kubectl`, `helm`, `jq` and `yq`.
 
 ```bash
-hack/setup-cluster.sh 4   # kind + KWOK + fake-gpu-operator + 4 simulated 8-GPU H100 nodes
-hack/install-kai.sh       # KAI Scheduler
-make smoke                # gang scheduling, positive and negative cases
+hack/setup-cluster.sh   # kind + KWOK + fake-gpu-operator + the topology below
+hack/install-kai.sh     # KAI Scheduler
+make smoke              # gang scheduling and topology placement, each with its negative case
+```
+
+The cluster is described by one file. This one is two racks of two DGX H100 nodes — 32
+GPUs across four NVLink domains and two fault domains:
+
+```yaml
+apiVersion: gpu-sim.io/v1alpha1
+kind: ClusterTopology
+metadata:
+  name: two-racks-h100
+spec:
+  nodePools:
+    dgx-h100:
+      profile: h100       # product, memory, PCIe and NUMA come from NVIDIA's own profile
+      gpuCount: 8
+      nvlink: full-mesh
+  racks:
+    - name: rack-1
+      faultDomain: fd-1
+      nodes:
+        - { name: gpu-node-1, pool: dgx-h100 }
+        - { name: gpu-node-2, pool: dgx-h100 }
+    - name: rack-2
+      faultDomain: fd-2
+      nodes:
+        - { name: gpu-node-3, pool: dgx-h100 }
+        - { name: gpu-node-4, pool: dgx-h100 }
+```
+
+`topology-gen` turns that into simulated nodes with topology labels, DRA `ResourceSlice`s
+carrying per-GPU NVLink domain, PCIe root and NUMA node, and the scheduler's own topology
+object — all from the one file, so they cannot describe different clusters.
+
+```bash
+make render                             # see the objects without touching the cluster
+make topology TOPOLOGY=path/to/file.yaml
 ```
 
 Tear it down with `make cluster-down`.

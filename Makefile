@@ -1,6 +1,7 @@
 SHELL := /bin/bash
 CLUSTER_NAME := gpu-sim
 KIND_CONFIG := hack/kind-cluster.yaml
+TOPOLOGY ?= topologies/two-racks-h100.yaml
 
 .PHONY: help
 help: ## Show the available targets
@@ -20,13 +21,23 @@ install-kai: ## Install KAI Scheduler on the running cluster
 	hack/install-kai.sh
 
 .PHONY: smoke
-smoke: ## Run the Phase 0 smoke tests against the running cluster
+smoke: ## Run the smoke tests against the running cluster
 	kubectl apply -f hack/smoke/kai-gang.yaml
 	kubectl apply -f hack/smoke/kai-gang-overcapacity.yaml
+	kubectl apply -f hack/smoke/topology-placement.yaml
+	kubectl apply -f hack/smoke/topology-placement-impossible.yaml
 
 .PHONY: build
-build: ## Build the gpu-sim binary into bin/
-	go build -o bin/gpu-sim ./cmd/gpu-sim
+build: ## Build the binaries into bin/
+	go build -o bin/ ./cmd/...
+
+.PHONY: topology
+topology: ## Apply TOPOLOGY (default: topologies/two-racks-h100.yaml) to the running cluster
+	go run ./cmd/topology-gen apply -f $(TOPOLOGY)
+
+.PHONY: render
+render: ## Print the objects TOPOLOGY would create, without touching the cluster
+	go run ./cmd/topology-gen render -f $(TOPOLOGY)
 
 .PHONY: test
 test: ## Run the unit tests

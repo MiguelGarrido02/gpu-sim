@@ -1,0 +1,45 @@
+# Phase 1 acceptance test, negative half: a job that fits the cluster but not any one rack.
+#
+# Twenty GPUs against a cluster of 32 free GPUs arranged as two racks of 16. Capacity is
+# not the constraint — the job would schedule immediately without the topology annotation —
+# so this isolates the constraint itself. A scheduler that accepted the annotation and then
+# ignored it would spread the job across both racks and, on real hardware, run every
+# all-reduce over the slow path between them.
+#
+# Expected: zero pods scheduled, for as long as the cluster stays this shape.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: rack-local-impossible
+  namespace: gpu-sim-test
+  annotations:
+    kai.scheduler/batch-min-member: "20"
+    kai.scheduler/topology: "two-racks-h100"
+    kai.scheduler/topology-required-placement: "rack"
+spec:
+  parallelism: 20
+  completions: 20
+  template:
+    metadata:
+      labels:
+        kai.scheduler/queue: default-queue
+    spec:
+      schedulerName: kai-scheduler
+      restartPolicy: Never
+      nodeSelector:
+        type: kwok
+      tolerations:
+        - key: kwok.x-k8s.io/node
+          operator: Equal
+          value: fake
+          effect: NoSchedule
+      containers:
+        - name: main
+          image: ubuntu:24.04
+          command: ["sleep", "infinity"]
+          resources:
+            claims:
+              - name: gpu
+      resourceClaims:
+        - name: gpu
+          resourceClaimTemplateName: single-gpu

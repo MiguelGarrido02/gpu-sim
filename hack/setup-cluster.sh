@@ -7,13 +7,13 @@
 # it, and it doubles as executable documentation of which upstream versions the project
 # is known to work against.
 #
-# Usage: hack/setup-cluster.sh [node-count]
+# Usage: hack/setup-cluster.sh [topology-file]
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 CLUSTER_NAME="${CLUSTER_NAME:-gpu-sim}"
-NODE_COUNT="${1:-${NODE_COUNT:-4}}"
+TOPOLOGY="${1:-${TOPOLOGY:-${REPO_ROOT}/topologies/two-racks-h100.yaml}}"
 NAMESPACE="${NAMESPACE:-gpu-operator}"
 
 # Upstream versions are pinned so a broken upstream release cannot silently break a
@@ -61,32 +61,16 @@ helm upgrade --install gpu-operator "${FGO_CHART}" \
   --values "${REPO_ROOT}/hack/values-fake-gpu-operator.yaml" \
   --wait --timeout 5m
 
-# --- simulated GPU nodes ------------------------------------------------------------
+# --- the simulated cluster ------------------------------------------------------------
 
-log "Creating ${NODE_COUNT} simulated GPU nodes"
-for i in $(seq 1 "${NODE_COUNT}"); do
-  sed -e "s/NODE_NAME/gpu-node-${i}/g" -e "s/NODE_POOL/default/g" \
-    "${REPO_ROOT}/hack/kwok-gpu-node.yaml" | kubectl apply -f -
-done
-
-# --- wait for the simulation to converge ---------------------------------------------
-
-log "Waiting for the operator to publish topology and ResourceSlices"
-for i in $(seq 1 "${NODE_COUNT}"); do
-  node="gpu-node-${i}"
-  for _ in $(seq 1 60); do
-    if kubectl get resourceslice "kwok-${node}-gpu" >/dev/null 2>&1; then
-      break
-    fi
-    sleep 2
-  done
-  if ! kubectl get resourceslice "kwok-${node}-gpu" >/dev/null 2>&1; then
-    echo "ERROR: no ResourceSlice was published for ${node}" >&2
-    exit 1
-  fi
-done
+# topology-gen creates the nodes, publishes their ResourceSlices with per-GPU NVLink, PCIe
+# and NUMA attributes, and writes the matching scheduler topology — all from the one file,
+# so the three cannot describe different clusters.
+log "Generating the simulated cluster from ${TOPOLOGY}"
+go run "${REPO_ROOT}/cmd/topology-gen" apply -f "${TOPOLOGY}" --namespace "${NAMESPACE}"
 
 log "Cluster is ready"
-kubectl get nodes -l type=kwok
+kubectl get nodes -l type=kwok -o custom-columns=\
+'NAME:.metadata.name,RACK:.metadata.labels.gpu-sim\.io/rack,FAULT-DOMAIN:.metadata.labels.gpu-sim\.io/fault-domain,NVLINK-DOMAIN:.metadata.labels.gpu-sim\.io/nvlink-domain'
 echo
 kubectl get resourceslices

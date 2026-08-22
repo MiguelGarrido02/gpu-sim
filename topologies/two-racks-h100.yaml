@@ -1,0 +1,35 @@
+# Two racks of two DGX H100 nodes: 32 GPUs in four NVLink domains, across two fault
+# domains.
+#
+# The smallest topology that can tell a topology-aware scheduler from an ordinary one. A
+# 12-GPU job fits inside one rack but not one node, so placing it correctly requires
+# reasoning about the rack level; a scheduler ignoring topology would spread it across both
+# racks and, on real hardware, run at the speed of the slowest link between them.
+apiVersion: gpu-sim.io/v1alpha1
+kind: ClusterTopology
+metadata:
+  name: two-racks-h100
+spec:
+  nodePools:
+    dgx-h100:
+      # Product name, memory, architecture, per-GPU PCIe bus IDs and NUMA assignments all
+      # come from this profile, which fake-gpu-operator syncs from NVIDIA.
+      profile: h100
+      gpuCount: 8
+      # An NVSwitch backplane connects all eight GPUs to each other. On DGX-class hardware
+      # NVLink stops at the node boundary, so no rack below declares an nvlinkDomain and
+      # each node forms its own.
+      nvlink: full-mesh
+
+  racks:
+    - name: rack-1
+      faultDomain: fd-1
+      nodes:
+        - { name: gpu-node-1, pool: dgx-h100 }
+        - { name: gpu-node-2, pool: dgx-h100 }
+
+    - name: rack-2
+      faultDomain: fd-2
+      nodes:
+        - { name: gpu-node-3, pool: dgx-h100 }
+        - { name: gpu-node-4, pool: dgx-h100 }
