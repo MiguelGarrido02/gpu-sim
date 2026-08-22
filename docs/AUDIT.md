@@ -254,16 +254,67 @@ Hypotheses ruled out during the audit:
 
 Since a gang that fits entirely on a single node still fails at
 `kubernetes.io/hostname` level, KAI's topology plugin is computing **zero available
-resources in every domain**, whatever the level. The cause is upstream in the topology
-plugin's domain accounting, and finding it is the first task of Phase 1 — it needs
-reading KAI's source, not more black-box probing.
+resources in every domain**, whatever the level.
 
-**This is the single most important result of Phase 0.** It reframes Phase 1: the plan
-assumed the work was enriching ResourceSlices with NVLink attributes so that a working
-topology-aware scheduler could consume them. In fact topology-aware scheduling does not
-function against a simulated cluster at all yet, so Phase 1 has to make it work before
-it can make it realistic. If the cause turns out to be a genuine upstream bug, the fix
-belongs in KAI and is worth contributing back.
+### Resolution: the simulated nodes were missing well-known labels
+
+Root-caused at the start of Phase 1, and it is **not** a KAI bug.
+
+The decisive experiment was submitting a topology-constrained job that requested **no
+GPU at all**, only CPU and memory. It failed identically. That eliminated GPUs, DRA and
+resource accounting in a single step and pointed at the shape of the topology tree
+rather than its contents.
+
+`isNodePartOfTopology` in `pkg/scheduler/plugins/topology/common.go` drops any node that
+is missing a label for *any* level of the `Topology` CR:
+
+```go
+func isNodePartOfTopology(nodeInfo *node_info.NodeInfo, levels []kaiv1alpha1.TopologyLevel) bool {
+	for _, level := range levels {
+		if _, found := nodeInfo.Node.Labels[level.NodeLabel]; !found {
+			return false
+		}
+	}
+	return true
+}
+```
+
+The `Topology` CR used `kubernetes.io/hostname` as its leaf level, which is the
+conventional choice and appears in KAI's own documentation. **The KWOK nodes did not
+carry that label.** A real kubelet registers `kubernetes.io/hostname`, `kubernetes.io/os`
+and `kubernetes.io/arch` on every node it joins; a node object created from a hand-written
+manifest has no kubelet, so nothing adds them. Diffing a simulated node's labels against
+the real control-plane node's makes the omission obvious in one line.
+
+Consequence: every node was rejected from the topology tree, every domain ended up empty,
+and every domain therefore reported zero capacity — regardless of level, constraint type,
+gang size or resource requested. Every observation in the table above follows from that
+one missing label.
+
+With `kubernetes.io/hostname`, `kubernetes.io/os` and `kubernetes.io/arch` added to
+[`hack/kwok-gpu-node.yaml`](../hack/kwok-gpu-node.yaml), a 12-GPU gang requiring
+same-rack placement is scheduled entirely inside one rack:
+
+```
+gpu-node-1: 6
+gpu-node-2: 6
+racks used: 12 × rack-1
+```
+
+That is the Phase 1 acceptance test, passing on a fully simulated cluster.
+
+**The lesson generalises well beyond this bug, and it is the project's thesis in
+miniature.** The simulation failed not because it modelled GPUs badly, but because a
+simulated node was subtly *less complete* than a real one in a way no error message
+pointed at. KAI's diagnostics made it worse: `checkJobDomainFit` produces a precise
+per-resource error, and `subSetNodesFn` discards it in favour of the generic "not enough
+resources in the cluster to allocate the job". Surfacing that detail is a small,
+worthwhile contribution back to KAI.
+
+For Phase 1 this sets a requirement: `topology-gen` must emit the **full well-known
+label set** a real kubelet would register, not just the topology labels the project cares
+about. Fidelity gaps in simulated objects show up as inexplicable scheduler behaviour,
+which is exactly the failure mode gpu-sim exists to spare its users.
 
 ## 8. A trap in the configuration: double-counted GPUs
 
@@ -333,6 +384,9 @@ Teardown: `make cluster-down`.
 The base works. A gang-scheduled GPU workload runs on a fully simulated cluster on a
 laptop with no NVIDIA hardware, which is what Phase 0 set out to establish. The four
 value-add gaps identified in `PLAN.md` are all confirmed to be genuinely absent rather
-than merely undocumented, and one unplanned finding — that KAI's topology-aware
-scheduling does not currently work against a simulated cluster — moves to the front of
-Phase 1.
+than merely undocumented.
+
+Topology-aware scheduling also works, once the simulated nodes carry the labels a real
+kubelet would have registered (§7). Phase 1 can therefore proceed as originally planned —
+modelling NVLink topology and publishing it — rather than having to repair the consumer
+first.
