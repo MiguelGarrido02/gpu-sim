@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/MiguelGarrido02/gpu-sim/internal/gpuid"
+	"github.com/MiguelGarrido02/gpu-sim/internal/mig"
 	"github.com/MiguelGarrido02/gpu-sim/internal/profile"
 )
 
@@ -36,7 +37,16 @@ type ResolvedNode struct {
 	// the pool has no NVLink at all.
 	NVLinkDomain string
 
+	// MIG is set when the pool publishes partitions instead of whole GPUs.
+	MIG *ResolvedMIG
+
 	GPUs []ResolvedGPU
+}
+
+// ResolvedMIG carries what the generators need to publish partitioned devices.
+type ResolvedMIG struct {
+	Geometry mig.Geometry
+	Profiles []mig.Profile
 }
 
 type ResolvedGPU struct {
@@ -55,6 +65,11 @@ type ResolvedGPU struct {
 	NVLinkDomain string
 	NVLinkPeers  int
 	FaultDomain  string
+
+	// Partitions is empty unless MIG is enabled, in which case it lists every partition
+	// this GPU can offer. All of them are published; the scheduler picks, and which ones
+	// conflict is expressed through shared counters rather than decided here.
+	Partitions []mig.Partition
 }
 
 // ProfileLoader resolves a profile name to its parsed document.
@@ -85,6 +100,19 @@ func (ct *ClusterTopology) Resolve(load ProfileLoader) (*Resolved, error) {
 
 			domain, peers := nvlinkFor(pool, rack, node.Name, rackGPUs)
 
+			var resolvedMIG *ResolvedMIG
+			if pool.MIGEnabled() {
+				geometry, err := mig.GeometryFor(pool.Profile)
+				if err != nil {
+					return nil, fmt.Errorf("node %s: %w", node.Name, err)
+				}
+				migProfiles, err := geometry.SelectProfiles(pool.MIG.Profiles)
+				if err != nil {
+					return nil, fmt.Errorf("node %s: %w", node.Name, err)
+				}
+				resolvedMIG = &ResolvedMIG{Geometry: geometry, Profiles: migProfiles}
+			}
+
 			rn := ResolvedNode{
 				Name:         node.Name,
 				Pool:         node.Pool,
@@ -93,6 +121,7 @@ func (ct *ClusterTopology) Resolve(load ProfileLoader) (*Resolved, error) {
 				Rack:         rack.Name,
 				FaultDomain:  rack.FaultDomain,
 				NVLinkDomain: domain,
+				MIG:          resolvedMIG,
 			}
 
 			for i := 0; i < pool.GPUCount; i++ {
@@ -100,6 +129,11 @@ func (ct *ClusterTopology) Resolve(load ProfileLoader) (*Resolved, error) {
 				if err != nil {
 					return nil, fmt.Errorf("node %s GPU %d: %w", node.Name, i, err)
 				}
+				var partitions []mig.Partition
+				if resolvedMIG != nil {
+					partitions = mig.PartitionsFor(resolvedMIG.Geometry, resolvedMIG.Profiles, i)
+				}
+
 				rn.GPUs = append(rn.GPUs, ResolvedGPU{
 					Index:        i,
 					UUID:         gpuid.DeviceUUID(node.Name, i),
@@ -111,6 +145,7 @@ func (ct *ClusterTopology) Resolve(load ProfileLoader) (*Resolved, error) {
 					NVLinkDomain: domain,
 					NVLinkPeers:  peers,
 					FaultDomain:  rack.FaultDomain,
+					Partitions:   partitions,
 				})
 			}
 

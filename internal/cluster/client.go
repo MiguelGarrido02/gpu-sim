@@ -176,7 +176,7 @@ func (c *Client) ApplyResourceSlice(ctx context.Context, slice *resourceapi.Reso
 //
 // Only objects carrying gpu-sim's managed-by label are considered, so a real node in a
 // mixed cluster, or a simulated node someone created by hand, is never touched.
-func (c *Client) Prune(ctx context.Context, keepNodes map[string]bool) ([]string, error) {
+func (c *Client) Prune(ctx context.Context, keepNodes, keepSlices map[string]bool) ([]string, error) {
 	var removed []string
 
 	slices, err := c.kube.ResourceV1().ResourceSlices().List(ctx, metav1.ListOptions{
@@ -187,8 +187,16 @@ func (c *Client) Prune(ctx context.Context, keepNodes map[string]bool) ([]string
 	}
 	// Slices go first: deleting a node while its slice still advertises GPUs would
 	// briefly leave the scheduler seeing devices on a node that no longer exists.
+	//
+	// Matching on slice name rather than only on node covers a node that stays but
+	// changes shape — turning MIG on replaces one whole-GPU slice with a counter slice
+	// and several partition slices, and the old one would otherwise linger, advertising
+	// GPUs that are no longer meant to exist.
 	for _, slice := range slices.Items {
-		if slice.Spec.NodeName != nil && keepNodes[*slice.Spec.NodeName] {
+		if keepSlices[slice.Name] {
+			continue
+		}
+		if len(keepSlices) == 0 && slice.Spec.NodeName != nil && keepNodes[*slice.Spec.NodeName] {
 			continue
 		}
 		if err := c.kube.ResourceV1().ResourceSlices().Delete(ctx, slice.Name, metav1.DeleteOptions{}); err != nil {

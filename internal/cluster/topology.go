@@ -13,7 +13,7 @@ type TopologyResult struct {
 	Name    string
 	Nodes   int
 	Slices  int
-	GPUs    int
+	Devices int
 	Removed []string
 }
 
@@ -43,12 +43,20 @@ func (c *Client) ApplyTopology(ctx context.Context, path string) (*TopologyResul
 	// Slices come second: a slice names its node, and publishing one for a node that does
 	// not exist yet leaves the scheduler briefly seeing GPUs nowhere.
 	slices := generate.ResourceSlices(resolved)
-	gpus := 0
+	devices := 0
 	for _, slice := range slices {
 		if err := c.ApplyResourceSlice(ctx, slice); err != nil {
 			return nil, err
 		}
-		gpus += len(slice.Spec.Devices)
+		devices += len(slice.Spec.Devices)
+	}
+
+	// MIG partitions are selected through their own DeviceClass, so a claim asking for a
+	// GPU never receives a partition of one.
+	if resolvedHasMIG(resolved) {
+		if err := c.ApplyMIGDeviceClass(ctx); err != nil {
+			return nil, err
+		}
 	}
 
 	kaiTopology := generate.KAITopologyFor(resolved)
@@ -58,11 +66,15 @@ func (c *Client) ApplyTopology(ctx context.Context, path string) (*TopologyResul
 
 	// Pruning last, so a failure above leaves the previous cluster intact rather than a
 	// half-deleted one.
-	keep := make(map[string]bool, len(nodes))
+	keepNodes := make(map[string]bool, len(nodes))
 	for _, node := range nodes {
-		keep[node.Name] = true
+		keepNodes[node.Name] = true
 	}
-	removed, err := c.Prune(ctx, keep)
+	keepSlices := make(map[string]bool, len(slices))
+	for _, slice := range slices {
+		keepSlices[slice.Name] = true
+	}
+	removed, err := c.Prune(ctx, keepNodes, keepSlices)
 	if err != nil {
 		return nil, err
 	}
@@ -71,7 +83,16 @@ func (c *Client) ApplyTopology(ctx context.Context, path string) (*TopologyResul
 		Name:    resolved.Name,
 		Nodes:   len(nodes),
 		Slices:  len(slices),
-		GPUs:    gpus,
+		Devices: devices,
 		Removed: removed,
 	}, nil
+}
+
+func resolvedHasMIG(resolved *topology.Resolved) bool {
+	for _, node := range resolved.Nodes {
+		if node.MIG != nil {
+			return true
+		}
+	}
+	return false
 }

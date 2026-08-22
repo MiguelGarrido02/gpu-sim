@@ -20,6 +20,12 @@ import (
 func ResourceSlices(resolved *topology.Resolved) []*resourceapi.ResourceSlice {
 	slices := make([]*resourceapi.ResourceSlice, 0, len(resolved.Nodes))
 	for _, rn := range resolved.Nodes {
+		// A MIG-enabled GPU is not published as a whole device: on real hardware it is
+		// not directly allocatable, and the whole GPU is simply the largest partition.
+		if rn.MIG != nil {
+			slices = append(slices, migSlices(rn, resolved.Name)...)
+			continue
+		}
 		slices = append(slices, resourceSlice(rn, resolved.Name))
 	}
 	return slices

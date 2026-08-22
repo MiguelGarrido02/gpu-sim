@@ -10,8 +10,11 @@ import (
 	resourceapi "k8s.io/api/resource/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
+	"github.com/MiguelGarrido02/gpu-sim/internal/generate"
 	"github.com/MiguelGarrido02/gpu-sim/internal/workload"
 )
 
@@ -265,4 +268,38 @@ func (c *Client) AllPods(ctx context.Context, ns string) ([]corev1.Pod, error) {
 		return nil, fmt.Errorf("listing pods in %s: %w", ns, err)
 	}
 	return list.Items, nil
+}
+
+var deviceClassGVR = schema.GroupVersionResource{
+	Group:    "resource.k8s.io",
+	Version:  "v1",
+	Resource: "deviceclasses",
+}
+
+// ApplyMIGDeviceClass creates or updates the DeviceClass MIG partitions are selected
+// through. Applied dynamically to keep the generator's own DeviceClass type as the single
+// description of its shape.
+func (c *Client) ApplyMIGDeviceClass(ctx context.Context) error {
+	raw, err := runtime.DefaultUnstructuredConverter.ToUnstructured(generate.MIGDeviceClass())
+	if err != nil {
+		return fmt.Errorf("converting MIG DeviceClass: %w", err)
+	}
+	obj := &unstructured.Unstructured{Object: raw}
+
+	classes := c.dynamic.Resource(deviceClassGVR)
+	existing, err := classes.Get(ctx, generate.MIGDeviceClassName, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		if _, err := classes.Create(ctx, obj, metav1.CreateOptions{}); err != nil {
+			return fmt.Errorf("creating MIG DeviceClass: %w", err)
+		}
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("reading MIG DeviceClass: %w", err)
+	}
+	obj.SetResourceVersion(existing.GetResourceVersion())
+	if _, err := classes.Update(ctx, obj, metav1.UpdateOptions{}); err != nil {
+		return fmt.Errorf("updating MIG DeviceClass: %w", err)
+	}
+	return nil
 }

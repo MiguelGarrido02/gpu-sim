@@ -50,8 +50,8 @@ func (r Report) WriteResult(res *Result) {
 	}
 
 	fmt.Fprintf(r.Out, "    %s\n", r.colour(colDim, fmt.Sprintf(
-		"cluster %s · %d nodes · %d GPUs · scheduler %s",
-		res.Cluster.Topology, res.Cluster.Nodes, res.Cluster.GPUs, res.Cluster.Scheduler)))
+		"cluster %s · %d nodes · %d devices · scheduler %s",
+		res.Cluster.Topology, res.Cluster.Nodes, res.Cluster.Devices, res.Cluster.Scheduler)))
 
 	for _, a := range res.Assertions {
 		if a.Passed {

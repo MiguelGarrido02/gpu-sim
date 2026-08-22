@@ -50,6 +50,30 @@ type NodePool struct {
 
 	// NVLink is how the node's own GPUs are connected to each other.
 	NVLink NVLinkTopology `json:"nvlink"`
+
+	// MIG, when present and enabled, publishes each GPU as its set of possible MIG
+	// partitions instead of as one whole device. Absent, nothing changes.
+	MIG *MIGConfig `json:"mig,omitempty"`
+}
+
+// MIGConfig turns a pool's GPUs into partitioned devices.
+//
+// A MIG-enabled GPU is not published as a whole device, because on real hardware it is not
+// directly allocatable — the whole GPU is the largest profile, which is published like any
+// other partition.
+type MIGConfig struct {
+	Enabled bool `json:"enabled"`
+
+	// Profiles narrows what the GPUs offer. Empty means every profile the hardware
+	// supports, which is what makes fragmentation emerge from the order workloads arrive
+	// rather than from this file. Naming a subset is how a static or semi-static MIG
+	// policy is expressed.
+	Profiles []string `json:"profiles,omitempty"`
+}
+
+// MIGEnabled reports whether the pool publishes partitions.
+func (p NodePool) MIGEnabled() bool {
+	return p.MIG != nil && p.MIG.Enabled
 }
 
 // NVLinkTopology describes intra-node GPU interconnect.

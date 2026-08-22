@@ -22,8 +22,12 @@ import (
 )
 
 const (
-	// gpuDeviceClass is published by fake-gpu-operator and selects simulated GPUs.
+	// gpuDeviceClass is published by fake-gpu-operator and selects whole simulated GPUs.
 	gpuDeviceClass = "gpu.nvidia.com"
+
+	// migDeviceClass selects MIG partitions. They live in a separate class so that a
+	// workload asking for a GPU never receives a slice of one.
+	migDeviceClass = "mig.nvidia.com"
 
 	// Simulated nodes carry a NoSchedule taint so real workloads never land on them by
 	// accident; anything meant for the simulation opts in explicitly.
@@ -119,18 +123,31 @@ func checkSupported(w scenario.Workload, sched scenario.Scheduler) error {
 func claimTemplateName(workload string) string { return workload + "-gpu" }
 
 func claimTemplate(w scenario.Workload, namespace string) *resourceapi.ResourceClaimTemplate {
+	deviceClass := gpuDeviceClass
+	var selectors []resourceapi.DeviceSelector
+
+	if w.MIGProfile != "" {
+		deviceClass = migDeviceClass
+		selectors = append(selectors, resourceapi.DeviceSelector{
+			CEL: &resourceapi.CELDeviceSelector{
+				Expression: fmt.Sprintf("device.attributes[%q].profile == %q", gpuDeviceClass, w.MIGProfile),
+			},
+		})
+	}
+	if w.DeviceSelector != "" {
+		selectors = append(selectors, resourceapi.DeviceSelector{
+			CEL: &resourceapi.CELDeviceSelector{Expression: w.DeviceSelector},
+		})
+	}
+
 	request := resourceapi.DeviceRequest{
 		Name: "gpu",
 		Exactly: &resourceapi.ExactDeviceRequest{
-			DeviceClassName: gpuDeviceClass,
+			DeviceClassName: deviceClass,
 			Count:           int64(w.GPUs),
 			AllocationMode:  resourceapi.DeviceAllocationModeExactCount,
+			Selectors:       selectors,
 		},
-	}
-	if w.DeviceSelector != "" {
-		request.Exactly.Selectors = []resourceapi.DeviceSelector{
-			{CEL: &resourceapi.CELDeviceSelector{Expression: w.DeviceSelector}},
-		}
 	}
 
 	return &resourceapi.ResourceClaimTemplate{

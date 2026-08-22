@@ -6,6 +6,8 @@ import (
 	"os"
 
 	"sigs.k8s.io/yaml"
+
+	"github.com/MiguelGarrido02/gpu-sim/internal/mig"
 )
 
 // Load reads and validates a topology document.
@@ -104,6 +106,15 @@ func (p NodePool) validate(name string) []error {
 	if p.GPUCount <= 0 {
 		errs = append(errs, fmt.Errorf("pool %q has gpuCount %d, want at least 1", name, p.GPUCount))
 	}
+	if p.MIGEnabled() {
+		geometry, err := mig.GeometryFor(p.Profile)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("pool %q: %w", name, err))
+		} else if _, err := geometry.SelectProfiles(p.MIG.Profiles); err != nil {
+			errs = append(errs, fmt.Errorf("pool %q: %w", name, err))
+		}
+	}
+
 	switch p.NVLink {
 	case NVLinkFullMesh, NVLinkNone:
 	case "":

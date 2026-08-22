@@ -121,7 +121,7 @@ func topologyCmd(ctx context.Context, args []string) error {
 			return err
 		}
 		fmt.Printf("applied %d nodes\n", res.Nodes)
-		fmt.Printf("applied %d ResourceSlices covering %d GPUs\n", res.Slices, res.GPUs)
+		fmt.Printf("applied %d ResourceSlices covering %d devices\n", res.Slices, res.Devices)
 		fmt.Printf("applied scheduler topology %q\n", res.Name)
 		if len(res.Removed) > 0 {
 			fmt.Printf("removed %d objects no longer in the topology:\n", len(res.Removed))

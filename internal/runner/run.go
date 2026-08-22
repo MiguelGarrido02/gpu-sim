@@ -50,7 +50,7 @@ type Result struct {
 type ClusterSummary struct {
 	Topology  string `json:"topology"`
 	Nodes     int    `json:"nodes"`
-	GPUs      int    `json:"gpus"`
+	Devices   int    `json:"devices"`
 	Scheduler string `json:"scheduler"`
 }
 
@@ -97,7 +97,7 @@ func (r *Runner) Run(ctx context.Context, s *scenario.Scenario) *Result {
 	}
 	result.Cluster.Topology = topo.Name
 	result.Cluster.Nodes = topo.Nodes
-	result.Cluster.GPUs = topo.GPUs
+	result.Cluster.Devices = topo.Devices
 
 	// The topology name is only known after applying it, and placement annotations
 	// reference it, so workloads are re-translated now that it is available.

@@ -1,0 +1,28 @@
+# Two DGX H100 nodes with MIG enabled: every GPU published as the set of partitions it
+# could be cut into, rather than as one whole device.
+#
+# Sixteen GPUs offering 21 placements each is 336 devices, which is why this topology is
+# smaller than two-racks-h100. The point is not scale but fragmentation: what happens to a
+# GPU's usable capacity as small partitions arrive in an unlucky order.
+apiVersion: gpu-sim.io/v1alpha1
+kind: ClusterTopology
+metadata:
+  name: h100-mig
+spec:
+  nodePools:
+    dgx-h100-mig:
+      profile: h100
+      gpuCount: 8
+      nvlink: full-mesh
+      mig:
+        enabled: true
+        # Every profile the hardware supports. Narrowing the list is how a static MIG
+        # policy would be expressed; leaving it open is what lets fragmentation emerge
+        # from the order workloads arrive rather than from this file.
+
+  racks:
+    - name: rack-1
+      faultDomain: fd-1
+      nodes:
+        - { name: mig-node-1, pool: dgx-h100-mig }
+        - { name: mig-node-2, pool: dgx-h100-mig }

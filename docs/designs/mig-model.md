@@ -118,11 +118,13 @@ dynamic is strictly more general.
 A MIG-enabled GPU is not published as a whole device, because on real hardware it is not
 directly allocatable — the whole GPU is the `7g.80gb` partition, which *is* published.
 
-**The cost is object size, and it is the main risk in this design.** 21 devices per GPU × 8
-GPUs = **168 devices per node**, against a hard limit of 64 per slice. A node therefore
-needs one counter slice plus **three device slices**, with `resourceSliceCount: 4`. Whether
-the resulting objects stay comfortable at cluster scale is the first thing stage C should
-measure, not assume.
+**The cost is object size.** 21 devices per GPU × 8 GPUs = **168 devices per node**, against
+a hard limit of 64 per slice. A node therefore needs one counter slice plus **three device
+slices**, with `resourceSliceCount: 4`.
+
+Measured in stage C rather than assumed: the largest published slice is **37 KB**, and the
+counter slice 2 KB. Against etcd's ~1.5 MB object limit that is comfortable, and the risk
+this section was written to flag is closed.
 
 ## Decision 2 — what "fragmentation" means
 
@@ -207,8 +209,21 @@ mitigation is narrowing the default profile list rather than abandoning dynamic 
 
 **Counters are beta.** `DRAPartitionableDevices` is on by default in v1.34+ but a cluster
 can disable it, in which case every partition would appear independently allocatable and
-the simulation would silently overcommit each GPU. `topology-gen` must detect this and
-refuse rather than publish a cluster that lies.
+the simulation would silently overcommit each GPU. `gpu-sim` must detect this and refuse
+rather than publish a cluster that lies.
+
+**KAI Scheduler v0.17.0 cannot allocate partitionable devices at all**, discovered in stage
+C. On one cluster at one moment, an identical claim for a `7g.80gb` partition reached
+Running under the stock kube-scheduler and stayed Pending under KAI, which reported
+`cannot allocate all DRA claims on node ...`. It reproduces with a single pod and a single
+partition, so it is not a scale or counter-exhaustion effect; KAI's own code has no
+reference to counters, and its GPU accounting counts every partition as a whole GPU (336
+where the cluster has 16).
+
+The consequence is that MIG scenarios target the default scheduler for now, and the
+project's primary scheduler under test cannot exercise MIG. This is worth reporting
+upstream, and gpu-sim is the reproducer — which is the tool doing exactly what it exists
+for: finding a real scheduler gap on a laptop, with no hardware.
 
 ## Stage C consequences
 

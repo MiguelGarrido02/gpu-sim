@@ -1,0 +1,40 @@
+# The partition limit has to come from the hardware model, not from us.
+#
+# Sixteen H100s, each able to hold seven 1g.10gb instances — seven, not eight, because the
+# GPU has eight memory slices but only seven compute slices. Asking for 130 and receiving
+# exactly 112 proves both counter dimensions are being enforced: memory alone would allow
+# 128, and a scheduler ignoring the counters entirely would place all 130 on top of each
+# other.
+#
+# Scheduled by the stock kube-scheduler rather than KAI, and not by preference: KAI v0.17.0
+# cannot allocate counter-based partitionable devices at all. Verified on one cluster at one
+# moment — an identical claim reached Running under the default scheduler and stayed Pending
+# under KAI, with "cannot allocate all DRA claims on node ...". Switch this scenario to
+# `scheduler: kai` to reproduce it.
+apiVersion: gpu-sim.io/v1alpha1
+kind: Scenario
+metadata:
+  name: mig-partition-limit
+  description: MIG partitions are capped at what the hardware can actually hold.
+
+spec:
+  cluster:
+    topology: ../topologies/h100-mig.yaml
+    scheduler: default
+
+  workloads:
+    - name: small-inference
+      replicas: 130
+      gpus: 1
+      migProfile: 1g.10gb
+
+  assertions:
+    - name: exactly seven partitions per GPU are handed out, not eight
+      workload: small-inference
+      running: 112
+      within: 180s
+
+    - name: and every replica really holds a 1g.10gb partition
+      workload: small-inference
+      allocatedDevices:
+        profile: 1g.10gb

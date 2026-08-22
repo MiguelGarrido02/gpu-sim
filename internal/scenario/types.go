@@ -64,6 +64,11 @@ type Workload struct {
 
 	Placement *Placement `json:"placement,omitempty"`
 
+	// MIGProfile asks for a MIG partition of that profile rather than a whole GPU, e.g.
+	// "1g.10gb". Partitions are selected through their own device class, so a workload
+	// asking for a GPU never receives a partition of one.
+	MIGProfile string `json:"migProfile,omitempty"`
+
 	// DeviceSelector is a CEL expression filtering which GPUs qualify, e.g.
 	//   device.attributes['gpu.nvidia.com'].numaNode == 0
 	//
