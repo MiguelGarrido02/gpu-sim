@@ -42,7 +42,8 @@ type Spec struct {
 // form, and inviting them to drift.
 type NodePool struct {
 	// Profile names a GPU profile ConfigMap published by fake-gpu-operator: one of
-	// a100, h100, h200, b200, gb200, gb300, l40s, t4.
+	// a100, b200, gb200, gb300, h100, l40s, t4 — or one added through the operator's
+	// customProfiles values.
 	Profile string `json:"profile"`
 
 	// GPUCount is how many GPUs each node in the pool has.
