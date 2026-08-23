@@ -129,7 +129,7 @@ func (r *Runner) Run(ctx context.Context, s *scenario.Scenario) *Result {
 		return result
 	}
 
-	if err := r.submitAll(ctx, s, objects); err != nil {
+	if err := r.runTimeline(ctx, s, objects); err != nil {
 		result.Error = err.Error()
 		result.Duration = time.Since(start)
 		return result
@@ -153,27 +153,53 @@ func (r *Runner) Run(ctx context.Context, s *scenario.Scenario) *Result {
 	return result
 }
 
-// submitAll creates workloads on their declared timeline. Arrival order is load-bearing:
-// the same partitions arriving in a different order leave a GPU usable or useless.
-func (r *Runner) submitAll(ctx context.Context, s *scenario.Scenario, objects map[string]*workload.Objects) error {
-	ordered := make([]scenario.Workload, len(s.Spec.Workloads))
-	copy(ordered, s.Spec.Workloads)
-	sort.SliceStable(ordered, func(i, j int) bool {
-		return ordered[i].SubmitAt.Duration < ordered[j].SubmitAt.Duration
-	})
+// event is one thing happening on a scenario's timeline.
+type event struct {
+	at       time.Duration
+	retire   bool
+	workload scenario.Workload
+}
+
+// runTimeline submits and retires workloads at their declared offsets.
+//
+// Retirement is not a tidy-up step but part of the experiment. The upstream DRA allocator
+// packs, filling each GPU from the lowest free placement upward, so a run that only ever
+// submits leaves GPUs either full or untouched. Fragmentation appears when partitions are
+// released out of the order they were taken — which is the state a real cluster spends most
+// of its life in.
+func (r *Runner) runTimeline(ctx context.Context, s *scenario.Scenario, objects map[string]*workload.Objects) error {
+	var events []event
+	for _, w := range s.Spec.Workloads {
+		events = append(events, event{at: w.SubmitAt.Duration, workload: w})
+		if w.RetireAt.Duration > 0 {
+			events = append(events, event{at: w.RetireAt.Duration, retire: true, workload: w})
+		}
+	}
+	// Stable sort keeps declaration order among events at the same offset, so a scenario
+	// can rely on the order it wrote them in.
+	sort.SliceStable(events, func(i, j int) bool { return events[i].at < events[j].at })
 
 	start := time.Now()
-	for _, w := range ordered {
-		if wait := w.SubmitAt.Duration - time.Since(start); wait > 0 {
-			r.log("waiting %s before submitting %s", wait.Round(time.Second), w.Name)
+	for _, e := range events {
+		if wait := e.at - time.Since(start); wait > 0 {
+			r.log("waiting %s", wait.Round(time.Second))
 			select {
 			case <-time.After(wait):
 			case <-ctx.Done():
 				return ctx.Err()
 			}
 		}
-		r.log("submitting %s (%d replicas, %d GPU each)", w.Name, w.Replicas, w.GPUs)
-		if err := r.client.Submit(ctx, Namespace, objects[w.Name]); err != nil {
+
+		if e.retire {
+			r.log("retiring %s", e.workload.Name)
+			if err := r.client.Retire(ctx, Namespace, e.workload.Name); err != nil {
+				return err
+			}
+			continue
+		}
+
+		r.log("submitting %s (%d replicas, %d GPU each)", e.workload.Name, e.workload.Replicas, e.workload.GPUs)
+		if err := r.client.Submit(ctx, Namespace, objects[e.workload.Name]); err != nil {
 			return err
 		}
 	}

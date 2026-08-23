@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	resourceapi "k8s.io/api/resource/v1"
@@ -302,4 +303,41 @@ func (c *Client) ApplyMIGDeviceClass(ctx context.Context) error {
 		return fmt.Errorf("updating MIG DeviceClass: %w", err)
 	}
 	return nil
+}
+
+// Retire deletes a workload's objects, releasing whatever they held.
+//
+// The claim template stays: deleting it would not free anything (claims are owned by their
+// pods) and a scenario may submit the same workload shape again.
+func (c *Client) Retire(ctx context.Context, ns, name string) error {
+	background := metav1.DeletePropagationBackground
+	opts := metav1.DeleteOptions{PropagationPolicy: &background}
+
+	err := c.kube.AppsV1().Deployments(ns).Delete(ctx, name, opts)
+	if err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("retiring deployment %s: %w", name, err)
+	}
+	err = c.kube.BatchV1().Jobs(ns).Delete(ctx, name, opts)
+	if err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("retiring job %s: %w", name, err)
+	}
+
+	// Wait for the pods to go, or the partitions they hold would still be allocated when
+	// the next event fires and the release this call exists to cause would not have
+	// happened yet.
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		pods, err := c.WorkloadPods(ctx, ns, name)
+		if err != nil {
+			return err
+		}
+		if len(pods) == 0 || time.Now().After(deadline) {
+			return nil
+		}
+		select {
+		case <-time.After(time.Second):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 }

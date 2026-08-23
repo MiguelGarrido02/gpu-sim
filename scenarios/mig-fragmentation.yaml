@@ -1,0 +1,57 @@
+# Fragmentation is caused by churn, not by arrival.
+#
+# The upstream DRA allocator packs, filling each GPU from the lowest free placement upward,
+# so a run that only ever submits leaves GPUs either full or untouched. Holes appear when
+# partitions are released out of the order they were taken — the state a real cluster spends
+# most of its life in, and the one nobody can measure today without owning the hardware.
+#
+# One GPU, eight memory slices, seven compute slices. Every step is deterministic:
+#
+#   t=0s   low     1g.10gb          -> slice 0
+#   t=20s  filler  1g.10gb × 3      -> slices 1, 2, 3
+#   t=40s  high    1g.10gb          -> slice 4
+#   t=60s  filler retires           -> slices 1, 2, 3 released
+#
+# What remains is two partitions holding slices 0 and 4, and six free slices — three
+# quarters of the GPU's memory, and five of its seven compute slices, unused.
+#
+# Three profiles lose out, and each loss is arithmetic a reader can check against the
+# timeline above:
+#
+#   3g.40gb  needs 4 contiguous slices from 0 or 4; a single 10 GB partition sits at the
+#            head of each run, so neither is available   -> 1 lost
+#   4g.40gb  same two placements, blocked the same way   -> 1 lost
+#   1g.20gb  needs 2 aligned slices; starts 2 and 6 survive, 0 and 4 do not, so two fit
+#            where three would                            -> 1 lost
+#
+# Three in total. The first draft of this comment said two: it forgot 4g.40gb, and the tool
+# caught the omission. That is the point of defining the metric arithmetically rather than
+# by feel — a number you can check is a number that can correct you.
+#
+# Scheduled by the stock kube-scheduler: KAI v0.17.0 cannot allocate partitionable devices
+# at all — see docs/designs/mig-model.md.
+apiVersion: gpu-sim.io/v1alpha1
+kind: Scenario
+metadata:
+  name: mig-fragmentation
+  description: Releasing partitions out of order strands capacity that no larger profile can use.
+
+spec:
+  cluster:
+    topology: ../topologies/single-h100-mig.yaml
+    scheduler: default
+
+  workloads:
+    - { name: low, replicas: 1, gpus: 1, migProfile: 1g.10gb, submitAt: 0s }
+    - { name: filler, replicas: 3, gpus: 1, migProfile: 1g.10gb, submitAt: 20s, retireAt: 60s }
+    - { name: high, replicas: 1, gpus: 1, migProfile: 1g.10gb, submitAt: 40s }
+
+  assertions:
+    - name: the partitions at either end are still held
+      workload: high
+      running: 1
+      within: 90s
+
+    - name: and the released ones stranded capacity nothing can reach
+      fragmentation:
+        atLeast: 3

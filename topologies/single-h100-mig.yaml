@@ -1,0 +1,25 @@
+# One node, one MIG-enabled H100. Deliberately the smallest possible cluster.
+#
+# Fragmentation is a property of where partitions sit inside a single GPU, and the DRA
+# allocator packs across GPUs before it packs within one. On a multi-GPU cluster a scenario
+# cannot say which GPU a replica lands on, so it cannot construct a specific arrangement of
+# holes. With one GPU the sequence is deterministic and the resulting fragmentation is
+# checkable by hand — which is the whole point of defining the metric arithmetically.
+apiVersion: gpu-sim.io/v1alpha1
+kind: ClusterTopology
+metadata:
+  name: single-h100-mig
+spec:
+  nodePools:
+    one-gpu:
+      profile: h100
+      gpuCount: 1
+      nvlink: none
+      mig:
+        enabled: true
+
+  racks:
+    - name: rack-1
+      faultDomain: fd-1
+      nodes:
+        - { name: mig-single, pool: one-gpu }

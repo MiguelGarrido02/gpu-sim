@@ -111,6 +111,10 @@ func (w Workload) validate(i int) []error {
 	if w.SubmitAt.Duration < 0 {
 		errs = append(errs, fmt.Errorf("%s has a negative submitAt", where))
 	}
+	if w.RetireAt.Duration != 0 && w.RetireAt.Duration <= w.SubmitAt.Duration {
+		errs = append(errs, fmt.Errorf("%s retires at %s, which is not after it is submitted at %s",
+			where, w.RetireAt.Duration, w.SubmitAt.Duration))
+	}
 
 	return errs
 }
@@ -124,9 +128,10 @@ func (a Assertion) validate(i int, workloads map[string]bool) []error {
 		errs = append(errs, fmt.Errorf("%s has no name: reports print it, so it has to say what should be true", where))
 	}
 
-	if a.Workload == "" {
+	// A fragmentation assertion is about the cluster, not about one workload.
+	if a.Workload == "" && a.Fragmentation == nil {
 		errs = append(errs, fmt.Errorf("%s names no workload", where))
-	} else if len(workloads) > 0 && !workloads[a.Workload] {
+	} else if a.Workload != "" && len(workloads) > 0 && !workloads[a.Workload] {
 		errs = append(errs, fmt.Errorf("%s references unknown workload %q", where, a.Workload))
 	}
 
@@ -153,6 +158,12 @@ func (a Assertion) validate(i int, workloads map[string]bool) []error {
 	}
 	if a.UnschedulableReason != "" {
 		set++
+	}
+	if a.Fragmentation != nil {
+		set++
+		if a.Fragmentation.AtLeast == nil && a.Fragmentation.AtMost == nil {
+			errs = append(errs, fmt.Errorf("%s sets fragmentation with neither atLeast nor atMost", where))
+		}
 	}
 
 	switch set {

@@ -53,6 +53,10 @@ func (r *Runner) evaluate(ctx context.Context, a scenario.Assertion, replicas in
 		}
 	}
 
+	if a.Workload == "" {
+		return result
+	}
+
 	result.Placement = r.placement(ctx, a.Workload)
 	if !result.Passed {
 		// Only on failure: the scheduler's explanation is the useful half of a bad
@@ -74,6 +78,8 @@ func (r *Runner) check(ctx context.Context, a scenario.Assertion, replicas int) 
 		return r.checkAllocatedDevices(ctx, a)
 	case a.UnschedulableReason != "":
 		return r.checkUnschedulableReason(ctx, a)
+	case a.Fragmentation != nil:
+		return r.checkFragmentation(ctx, a)
 	}
 	return false, "assertion sets no condition"
 }
@@ -199,6 +205,46 @@ func (r *Runner) checkUnschedulableReason(ctx context.Context, a scenario.Assert
 	}
 	return false, fmt.Sprintf("no reason contained %q; the scheduler said: %s",
 		a.UnschedulableReason, strings.Join(reasons, " | "))
+}
+
+// checkFragmentation bounds the partitions lost to fragmentation across the cluster.
+func (r *Runner) checkFragmentation(ctx context.Context, a scenario.Assertion) (bool, string) {
+	nodes, err := r.client.Fragmentation(ctx)
+	if err != nil {
+		return false, err.Error()
+	}
+	if len(nodes) == 0 {
+		return false, "no MIG-enabled nodes were found, so there is no fragmentation to measure"
+	}
+
+	total := 0
+	var worst []string
+	for _, node := range nodes {
+		total += node.TotalLost()
+		for _, gpu := range node.GPUs {
+			if gpu.TotalLost() > 0 {
+				largest := gpu.LargestAllocatable
+				if largest == "" {
+					largest = "nothing"
+				}
+				worst = append(worst, fmt.Sprintf("%s GPU %d lost %d (%d memory slices free, largest allocatable %s)",
+					node.Node, gpu.GPUIndex, gpu.TotalLost(), gpu.FreeMemorySlices, largest))
+			}
+		}
+	}
+
+	detail := fmt.Sprintf("%d partitions lost to fragmentation", total)
+	if len(worst) > 0 {
+		detail += ": " + strings.Join(worst, "; ")
+	}
+
+	if a.Fragmentation.AtLeast != nil && total < *a.Fragmentation.AtLeast {
+		return false, fmt.Sprintf("%s, want at least %d", detail, *a.Fragmentation.AtLeast)
+	}
+	if a.Fragmentation.AtMost != nil && total > *a.Fragmentation.AtMost {
+		return false, fmt.Sprintf("%s, want at most %d", detail, *a.Fragmentation.AtMost)
+	}
+	return true, detail
 }
 
 func (r *Runner) placement(ctx context.Context, name string) map[string]int {

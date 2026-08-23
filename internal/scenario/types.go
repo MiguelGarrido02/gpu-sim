@@ -77,10 +77,17 @@ type Workload struct {
 	// the expression a user has to write against real hardware anyway.
 	DeviceSelector string `json:"deviceSelector,omitempty"`
 
-	// SubmitAt delays submission relative to the start of the run. Arrival order is not
-	// decoration: MIG fragmentation depends entirely on it, since the same partitions
-	// arriving in a different order leave a GPU usable or useless.
+	// SubmitAt delays submission relative to the start of the run.
 	SubmitAt metav1.Duration `json:"submitAt,omitempty"`
+
+	// RetireAt deletes the workload at that offset, releasing whatever it held.
+	//
+	// Retirement is what produces fragmentation. The upstream DRA allocator packs, filling
+	// each GPU from the lowest free placement upward, so a run that only ever submits
+	// leaves GPUs either full or untouched. Holes appear when partitions are released out
+	// of the order they were taken — which is the state a real cluster is in most of the
+	// time, and the one worth measuring.
+	RetireAt metav1.Duration `json:"retireAt,omitempty"`
 }
 
 type Placement struct {
@@ -112,6 +119,11 @@ type Assertion struct {
 	// attribute values. Attribute names are as published, e.g. "numaNode".
 	AllocatedDevices map[string]string `json:"allocatedDevices,omitempty"`
 
+	// Fragmentation asserts on MIG capacity that is free but unreachable. Unlike the
+	// others it is a property of the cluster rather than of one workload, so it needs no
+	// workload name.
+	Fragmentation *FragmentationAssertion `json:"fragmentation,omitempty"`
+
 	// UnschedulableReason requires the scheduler's own explanation to contain this text.
 	// Asserting *why* something was refused is stronger than asserting that it was: a
 	// workload can stay pending for the intended reason or for an unrelated one, and only
@@ -126,4 +138,14 @@ type Assertion struct {
 	// false — the evidence is that nothing happened, so it has to be given time to
 	// happen. Using Within for those would pass instantly, before the scheduler had tried.
 	Settle metav1.Duration `json:"settle,omitempty"`
+}
+
+// FragmentationAssertion bounds the partitions lost to fragmentation across the cluster.
+//
+// Bounded rather than exact because the figure depends on which placements the scheduler
+// chose, and pinning an exact number would make the test assert the allocator's current
+// packing strategy rather than the property under test.
+type FragmentationAssertion struct {
+	AtLeast *int `json:"atLeast,omitempty"`
+	AtMost  *int `json:"atMost,omitempty"`
 }
