@@ -5,9 +5,11 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/MiguelGarrido02/gpu-sim/internal/cluster"
+	"github.com/MiguelGarrido02/gpu-sim/internal/generate"
 	"github.com/MiguelGarrido02/gpu-sim/internal/scenario"
 	"github.com/MiguelGarrido02/gpu-sim/internal/workload"
 )
@@ -24,6 +26,21 @@ type Runner struct {
 	client *cluster.Client
 	// Progress receives one line per step. Nil discards them, which is what tests want.
 	Progress func(string)
+
+	// faults records what each fault broke, in the order they fired. Assertions about
+	// recovery are judged against these rather than against the cluster's current state,
+	// because a pod on a deleted node keeps reporting Running for about a minute and a
+	// check made only at the end cannot tell a survivor from a corpse.
+	faults []faultRecord
+}
+
+// faultRecord is one fault and its casualties.
+type faultRecord struct {
+	name    string
+	firedAt time.Time
+	// disrupted maps a workload to the UIDs of its replicas that were Running when the
+	// fault fired and were hit by it.
+	disrupted map[string]map[string]bool
 }
 
 func New(client *cluster.Client) *Runner {
@@ -74,6 +91,8 @@ func (r *Runner) Run(ctx context.Context, s *scenario.Scenario) *Result {
 		Description: s.Metadata.Description,
 		Cluster:     ClusterSummary{Scheduler: string(s.Spec.Cluster.Scheduler)},
 	}
+
+	r.faults = nil
 
 	// Translation happens before anything is created, so a scenario asking a scheduler for
 	// something it cannot express fails without leaving objects behind.
@@ -158,6 +177,7 @@ type event struct {
 	at       time.Duration
 	retire   bool
 	workload scenario.Workload
+	fault    *scenario.Fault
 }
 
 // runTimeline submits and retires workloads at their declared offsets.
@@ -175,6 +195,9 @@ func (r *Runner) runTimeline(ctx context.Context, s *scenario.Scenario, objects 
 			events = append(events, event{at: w.RetireAt.Duration, retire: true, workload: w})
 		}
 	}
+	for i := range s.Spec.Faults {
+		events = append(events, event{at: s.Spec.Faults[i].At.Duration, fault: &s.Spec.Faults[i]})
+	}
 	// Stable sort keeps declaration order among events at the same offset, so a scenario
 	// can rely on the order it wrote them in.
 	sort.SliceStable(events, func(i, j int) bool { return events[i].at < events[j].at })
@@ -188,6 +211,14 @@ func (r *Runner) runTimeline(ctx context.Context, s *scenario.Scenario, objects 
 			case <-ctx.Done():
 				return ctx.Err()
 			}
+		}
+
+		if e.fault != nil {
+			r.log("injecting fault: %s", e.fault.Name)
+			if err := r.fire(ctx, *e.fault); err != nil {
+				return err
+			}
+			continue
 		}
 
 		if e.retire {
@@ -225,4 +256,109 @@ func (r *Runner) waitNamespaceEmpty(ctx context.Context) error {
 			return ctx.Err()
 		}
 	}
+}
+
+// fire injects one fault and records what it broke.
+//
+// The snapshot is taken before the fault lands, so it captures who was running at the
+// moment of failure; the casualties are then whichever of those the fault actually hit.
+// Kubernetes does the evicting and rescheduling — what is recorded here is only enough to
+// judge its reaction afterwards.
+func (r *Runner) fire(ctx context.Context, f scenario.Fault) error {
+	before, err := r.client.SnapshotPods(ctx, Namespace)
+	if err != nil {
+		return err
+	}
+
+	record := faultRecord{name: f.Name, firedAt: time.Now(), disrupted: map[string]map[string]bool{}}
+
+	switch {
+	case f.KillNode != "":
+		if err := r.client.DeleteNode(ctx, f.KillNode); err != nil {
+			return err
+		}
+		for _, pod := range before {
+			if pod.Running && pod.Node == f.KillNode {
+				record.add(pod)
+			}
+		}
+		r.log("node %s deleted, %d replicas lost", f.KillNode, record.total())
+
+	default:
+		match, err := r.deviceMatch(ctx, *f.Degrade)
+		if err != nil {
+			return err
+		}
+		tainted, err := r.client.TaintDevices(ctx, match, f.Degrade.TaintEffect())
+		if err != nil {
+			return err
+		}
+		for _, pod := range before {
+			if !pod.Running {
+				continue
+			}
+			for _, device := range pod.Devices {
+				if tainted[device] {
+					record.add(pod)
+					break
+				}
+			}
+		}
+		r.log("%d devices degraded, %d replicas lost", len(tainted), record.total())
+	}
+
+	r.faults = append(r.faults, record)
+	return nil
+}
+
+// deviceMatch resolves a fault's target to a set of devices.
+func (r *Runner) deviceMatch(ctx context.Context, d scenario.Degrade) (cluster.DeviceMatch, error) {
+	if len(d.Devices) > 0 {
+		return cluster.DeviceMatch{Attributes: d.Devices}, nil
+	}
+
+	label, ok := generate.LabelForLevel(d.Level)
+	if !ok {
+		return cluster.DeviceMatch{}, fmt.Errorf("unknown topology level %q, want one of %s",
+			d.Level, strings.Join(generate.KnownLevels(), ", "))
+	}
+	nodes, err := r.client.NodesWithLabel(ctx, label, d.Value)
+	if err != nil {
+		return cluster.DeviceMatch{}, err
+	}
+	if len(nodes) == 0 {
+		return cluster.DeviceMatch{}, fmt.Errorf("no node has %s %q, so the fault would break nothing", d.Level, d.Value)
+	}
+	return cluster.DeviceMatch{Nodes: nodes}, nil
+}
+
+func (f *faultRecord) add(pod cluster.PodState) {
+	if f.disrupted[pod.Workload] == nil {
+		f.disrupted[pod.Workload] = map[string]bool{}
+	}
+	f.disrupted[pod.Workload][pod.UID] = true
+}
+
+func (f faultRecord) total() int {
+	n := 0
+	for _, uids := range f.disrupted {
+		n += len(uids)
+	}
+	return n
+}
+
+// disruptedFor gathers the UIDs every fault took from one workload, and when the last of
+// them fired.
+func (r *Runner) disruptedFor(name string) (map[string]bool, time.Time, bool) {
+	uids := map[string]bool{}
+	var last time.Time
+	for _, record := range r.faults {
+		for uid := range record.disrupted[name] {
+			uids[uid] = true
+		}
+		if record.firedAt.After(last) {
+			last = record.firedAt
+		}
+	}
+	return uids, last, len(r.faults) > 0
 }

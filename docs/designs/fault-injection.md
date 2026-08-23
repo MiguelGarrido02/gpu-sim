@@ -60,7 +60,7 @@ faults:
   - name: one GPU's small partitions go unhealthy
     at: 30s
     degrade:
-      devices: device.attributes['gpu.nvidia.com'].profile == '1g.10gb'
+      devices: { profile: 1g.10gb }
 
   - name: a compute tray dies outright
     at: 45s
@@ -69,9 +69,17 @@ faults:
 
 `level`/`value` reads like the hardware and reuses `fault-domain`, `rack`, `nvlink-domain`
 and `host` — words the scenario author already knows from `placement.required` and
-`confinedTo`. The `devices` form is a raw CEL expression, the same one `deviceSelector`
-takes, and is the escape hatch for anything finer than a topology level: a MIG profile, a
-single UUID, one NUMA node.
+`confinedTo`. The `devices` form matches on published attributes and is the escape hatch for
+anything finer than a topology level: a MIG profile, a single UUID, one NUMA node.
+
+**`devices` takes attribute matchers rather than the CEL a `deviceSelector` takes**, and the
+reason is not the dependency it would add. A `deviceSelector`'s CEL is evaluated by the API
+server; a fault's would have to be evaluated *here*, to know which devices to taint.
+Reimplementing DRA's CEL semantics — attribute domain resolution, type coercion, the
+handling of a missing attribute — would mean a fault could taint a different set of devices
+than the identical expression selects, and the simulation would be wrong in a way nothing
+would catch. Matching on attribute equality is less expressive and exactly as truthful, and
+it reuses the vocabulary the `allocatedDevices` assertion already uses.
 
 `effect` defaults to `NoExecute`, because a fault that only blocks new work is a maintenance
 window rather than a failure, and the interesting question is what happens to work already

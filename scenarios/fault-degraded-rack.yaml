@@ -1,0 +1,44 @@
+# A rack's GPUs go bad while work is running on them.
+#
+# Degrading is the surgical fault: tainting the devices NoExecute makes Kubernetes evict the
+# pods holding them immediately, so recovery is measured in seconds rather than in the minute
+# a node deletion takes.
+#
+# Recovery is judged by pod identity. The replicas running when the fault fired are recorded,
+# and only pods outside that set count towards being healthy again — otherwise a replica that
+# has not noticed it is doomed would be counted as its own replacement.
+apiVersion: gpu-sim.io/v1alpha1
+kind: Scenario
+metadata:
+  name: fault-degraded-rack
+  description: When a rack's GPUs are tainted, the work on them moves to the surviving rack.
+
+spec:
+  cluster:
+    topology: ../topologies/two-racks-h100.yaml
+    scheduler: default
+
+  workloads:
+    - name: inference
+      replicas: 8
+      gpus: 1
+
+  faults:
+    - name: rack 1 loses its GPUs
+      at: 30s
+      degrade:
+        level: rack
+        value: rack-1
+
+  assertions:
+    - name: losing a rack takes out half the job
+      workload: inference
+      disrupted: 4
+
+    - name: the work comes back on the surviving rack
+      workload: inference
+      rescheduledWithin: 90s
+
+    - name: and it is all in one rack afterwards
+      workload: inference
+      confinedTo: rack

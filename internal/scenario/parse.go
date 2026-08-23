@@ -83,8 +83,17 @@ func (s *Scenario) Validate() error {
 		names[w.Name] = true
 	}
 
+	faultNames := map[string]bool{}
+	for i, f := range s.Spec.Faults {
+		errs = append(errs, f.validate(i, names)...)
+		if faultNames[f.Name] {
+			errs = append(errs, fmt.Errorf("fault %q is declared more than once", f.Name))
+		}
+		faultNames[f.Name] = true
+	}
+
 	for i, a := range s.Spec.Assertions {
-		errs = append(errs, a.validate(i, names)...)
+		errs = append(errs, a.validate(i, names, len(s.Spec.Faults) > 0)...)
 	}
 
 	return errors.Join(errs...)
@@ -119,7 +128,7 @@ func (w Workload) validate(i int) []error {
 	return errs
 }
 
-func (a Assertion) validate(i int, workloads map[string]bool) []error {
+func (a Assertion) validate(i int, workloads map[string]bool, hasFaults bool) []error {
 	var errs []error
 	where := fmt.Sprintf("assertion[%d]", i)
 	if a.Name != "" {
@@ -159,6 +168,12 @@ func (a Assertion) validate(i int, workloads map[string]bool) []error {
 	if a.UnschedulableReason != "" {
 		set++
 	}
+	if a.Disrupted != nil {
+		set++
+	}
+	if a.RescheduledWithin.Duration > 0 {
+		set++
+	}
 	if a.Fragmentation != nil {
 		set++
 		if a.Fragmentation.AtLeast == nil && a.Fragmentation.AtMost == nil {
@@ -177,6 +192,13 @@ func (a Assertion) validate(i int, workloads map[string]bool) []error {
 	if a.Within.Duration > 0 && a.Settle.Duration > 0 {
 		errs = append(errs, fmt.Errorf("%s sets both within and settle, want one: "+
 			"within polls until the condition holds, settle waits the full period and then checks", where))
+	}
+
+	// Both fault assertions read a snapshot taken when a fault fires, so without a fault
+	// there is nothing for them to measure and they would report a confusing zero rather
+	// than the mistake in the scenario.
+	if (a.Disrupted != nil || a.RescheduledWithin.Duration > 0) && !hasFaults {
+		errs = append(errs, fmt.Errorf("%s asserts on a fault, but the scenario declares none", where))
 	}
 
 	// A condition asserting that nothing happened cannot use `within`, which would be
@@ -199,4 +221,55 @@ func (a Assertion) ExpectedScheduled(replicas int) (int, error) {
 	default:
 		return strconv.Atoi(a.Scheduled)
 	}
+}
+
+func (f Fault) validate(i int, workloads map[string]bool) []error {
+	var errs []error
+	where := fmt.Sprintf("fault[%d]", i)
+	if f.Name != "" {
+		where = fmt.Sprintf("fault %q", f.Name)
+	} else {
+		errs = append(errs, fmt.Errorf("%s has no name: reports print it, so it has to say what broke", where))
+	}
+
+	if f.At.Duration <= 0 {
+		errs = append(errs, fmt.Errorf("%s fires at %s, want a positive offset: "+
+			"a fault at zero would break the cluster before anything was running on it", where, f.At.Duration))
+	}
+
+	switch {
+	case f.Degrade != nil && f.KillNode != "":
+		errs = append(errs, fmt.Errorf("%s sets both degrade and killNode, want one", where))
+	case f.Degrade == nil && f.KillNode == "":
+		errs = append(errs, fmt.Errorf("%s sets neither degrade nor killNode", where))
+	case f.Degrade != nil:
+		errs = append(errs, f.Degrade.validate(where)...)
+	}
+
+	return errs
+}
+
+func (d Degrade) validate(where string) []error {
+	var errs []error
+
+	byLevel := d.Level != "" || d.Value != ""
+	byDevices := len(d.Devices) > 0
+
+	switch {
+	case byLevel && byDevices:
+		errs = append(errs, fmt.Errorf("%s degrades by both level and devices, want one", where))
+	case !byLevel && !byDevices:
+		errs = append(errs, fmt.Errorf("%s degrades nothing: set level and value, or devices", where))
+	case byLevel && (d.Level == "" || d.Value == ""):
+		errs = append(errs, fmt.Errorf("%s needs both level and value", where))
+	}
+
+	switch d.Effect {
+	case "", EffectNoExecute, EffectNoSchedule:
+	default:
+		errs = append(errs, fmt.Errorf("%s has effect %q, want %q or %q",
+			where, d.Effect, EffectNoExecute, EffectNoSchedule))
+	}
+
+	return errs
 }

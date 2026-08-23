@@ -88,6 +88,85 @@ pod releases its `ResourceClaim` — so a workload that must *hold* GPUs long en
 counted has to be a Deployment. Exposing this as a knob would require understanding a KWOK
 implementation detail in order to write a correct test.
 
+## Faults
+
+A fault breaks something at a point on the same timeline the workloads use.
+
+```yaml
+faults:
+  - name: rack 1 loses its GPUs
+    at: 30s
+    degrade:
+      level: rack          # fault-domain | rack | nvlink-domain | host
+      value: rack-1
+
+  - name: one GPU's small partitions go unhealthy
+    at: 45s
+    degrade:
+      devices: { profile: 1g.10gb }
+
+  - name: a compute node dies outright
+    at: 60s
+    killNode: gpu-node-1
+```
+
+**`degrade`** taints the matching devices so Kubernetes treats them as unusable. The default
+effect is `NoExecute`, which evicts the pods already holding them — a fault that only blocked
+new work would be a maintenance window rather than a failure. `NoSchedule` is available for
+modelling a cordon.
+
+Degrading an NVLink domain and failing a MIG partition are the same mechanism aimed at
+different devices, which is why there is one fault kind and a selector rather than two names.
+`level`/`value` uses the topology vocabulary; `devices` matches published attributes and is
+the escape hatch for anything finer.
+
+**`killNode`** deletes a node. It is blunter and much slower: Kubernetes needs about a minute
+to garbage-collect the orphaned pods, mirroring a real node's heartbeat lapsing before
+anything reacts. That minute is not shortened, because it is the answer you came for. Prefer
+`degrade` when the recovery logic is under test and `killNode` when the node's disappearance
+itself is.
+
+Faults are not repaired. Every scenario reapplies its topology before running, which
+republishes the slices without taints and recreates any deleted node, so a fault never leaks
+into the next scenario.
+
+### Asserting on a fault
+
+```yaml
+- name: losing a rack takes out half the job
+  workload: inference
+  disrupted: 4
+
+- name: the work comes back on the surviving rack
+  workload: inference
+  rescheduledWithin: 90s
+
+- name: and it is all in one rack afterwards
+  workload: inference
+  confinedTo: rack
+```
+
+`disrupted` states the blast radius, which is what a fault-domain test is really about, and
+it catches a fault that fired but hit nothing.
+
+`rescheduledWithin` is the recovery time, measured from the fault. **It counts by pod
+identity, never by number.** A replica on a deleted node keeps reporting `Running` for about
+a minute, so "are eight replicas running?" answers yes throughout the outage and a
+count-based check would report no failure at all — the reason a real run reports `1m2s` where
+a naive one reports zero. The replicas running when the fault fired are recorded and excluded,
+so a doomed pod cannot be counted as its own replacement.
+
+A fault that disrupts nothing **fails** rather than passing vacuously:
+
+```
+FAIL recovers
+     the fault disrupted no replica of "small", so there was nothing to recover from
+```
+
+`confinedTo` is the third assertion worth making after a fault and needs nothing new: a
+scheduler that recovers by abandoning its placement constraint has not recovered, it has
+quietly downgraded the job.
+
 ## Schedulers, and what they cannot do
 
 ```yaml
@@ -130,6 +209,8 @@ silently, which is the worst thing a test framework can do.
 | `confinedTo: <level>` | every placed replica shares one value of that topology level |
 | `allocatedDevices: {attr: value}` | every GPU allocated to the workload has these attributes |
 | `unschedulableReason: <substring>` | the scheduler's own explanation contains this text |
+| `disrupted: <n>` | how many running replicas a fault took out |
+| `rescheduledWithin: <duration>` | the workload is back to full strength this long after the fault |
 | `fragmentation: {atLeast, atMost}` | MIG capacity lost to fragmentation, cluster-wide |
 
 `fragmentation` is the only assertion about the cluster rather than about one workload, so
@@ -208,6 +289,8 @@ automatically.
 | `default-scheduler` | the simulated GPUs work with no KAI at all |
 | `mig-partition-limit` | MIG partitions are capped at what the hardware holds — seven per GPU, not eight |
 | `mig-fragmentation` | releasing partitions out of order strands capacity nothing can reach |
+| `fault-degraded-rack` | tainted GPUs evict their work, which lands on the surviving rack in seconds |
+| `fault-killed-node` | a deleted node's work returns after the real garbage-collection delay |
 
 Every positive case is paired with a negative one. A suite that only asserts success passes
 just as happily against a scheduler that ignores the constraint entirely — which is exactly

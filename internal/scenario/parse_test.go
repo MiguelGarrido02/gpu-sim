@@ -236,3 +236,113 @@ func TestFragmentationAssertionNeedsABound(t *testing.T) {
 		t.Errorf("error %q does not explain the problem", err)
 	}
 }
+
+func faultScenario(mutate func(*Fault)) *Scenario {
+	s := valid()
+	f := Fault{
+		Name:    "a node dies",
+		At:      metav1.Duration{Duration: 30 * time.Second},
+		Degrade: &Degrade{Level: "rack", Value: "rack-1"},
+	}
+	mutate(&f)
+	s.Spec.Faults = []Fault{f}
+	return s
+}
+
+func TestValidateFaults(t *testing.T) {
+	tests := []struct {
+		name    string
+		mutate  func(*Fault)
+		wantErr string
+	}{
+		{
+			name:    "neither degrade nor killNode",
+			mutate:  func(f *Fault) { f.Degrade = nil },
+			wantErr: "sets neither degrade nor killNode",
+		},
+		{
+			name:    "both degrade and killNode",
+			mutate:  func(f *Fault) { f.KillNode = "gpu-node-1" },
+			wantErr: "sets both degrade and killNode",
+		},
+		{
+			name:    "degrade by level and devices at once",
+			mutate:  func(f *Fault) { f.Degrade.Devices = map[string]string{"profile": "1g.10gb"} },
+			wantErr: "by both level and devices",
+		},
+		{
+			name:    "a level with no value",
+			mutate:  func(f *Fault) { f.Degrade.Value = "" },
+			wantErr: "needs both level and value",
+		},
+		{
+			name:    "an effect the API does not have",
+			mutate:  func(f *Fault) { f.Degrade.Effect = "PreferNoSchedule" },
+			wantErr: `effect "PreferNoSchedule"`,
+		},
+		{
+			// A fault at zero would break the cluster before anything ran on it, so it
+			// could only ever disrupt nothing.
+			name:    "a fault at offset zero",
+			mutate:  func(f *Fault) { f.At = metav1.Duration{} },
+			wantErr: "want a positive offset",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := faultScenario(tt.mutate).Validate()
+			if err == nil {
+				t.Fatal("Validate accepted an invalid fault")
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("error %q does not mention %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidateAcceptsFaults(t *testing.T) {
+	for _, mutate := range []func(*Fault){
+		func(*Fault) {},
+		func(f *Fault) { f.Degrade = nil; f.KillNode = "gpu-node-1" },
+		func(f *Fault) { f.Degrade = &Degrade{Devices: map[string]string{"profile": "1g.10gb"}} },
+		func(f *Fault) { f.Degrade.Effect = EffectNoSchedule },
+	} {
+		if err := faultScenario(mutate).Validate(); err != nil {
+			t.Errorf("Validate rejected a valid fault: %v", err)
+		}
+	}
+}
+
+// TestFaultAssertionsNeedAFault guards a scenario that asks about recovery without breaking
+// anything: both assertions read a snapshot taken when a fault fires, so with no fault they
+// would report a confusing zero rather than the mistake in the scenario.
+func TestFaultAssertionsNeedAFault(t *testing.T) {
+	disrupted := 2
+	for _, a := range []Assertion{
+		{Name: "blast radius", Workload: "training", Disrupted: &disrupted},
+		{Name: "recovery", Workload: "training", RescheduledWithin: metav1.Duration{Duration: time.Minute}},
+	} {
+		s := valid()
+		s.Spec.Assertions = []Assertion{a}
+
+		err := s.Validate()
+		if err == nil {
+			t.Fatalf("Validate accepted %q with no fault declared", a.Name)
+		}
+		if !strings.Contains(err.Error(), "the scenario declares none") {
+			t.Errorf("error %q does not explain the problem", err)
+		}
+	}
+}
+
+func TestDefaultTaintEffectIsNoExecute(t *testing.T) {
+	// A fault that only blocks new work is a maintenance window rather than a failure.
+	if got := (Degrade{}).TaintEffect(); got != EffectNoExecute {
+		t.Errorf("default effect = %q, want %q", got, EffectNoExecute)
+	}
+	if got := (Degrade{Effect: EffectNoSchedule}).TaintEffect(); got != EffectNoSchedule {
+		t.Errorf("explicit effect = %q, want it respected", got)
+	}
+}

@@ -1,0 +1,42 @@
+# A node disappears outright.
+#
+# Blunter and much slower than degrading its devices: Kubernetes needs about a minute to
+# garbage-collect the pods orphaned on a deleted node, which mirrors a real node's heartbeat
+# lapsing before the node controller acts. That minute is the answer a user comes here for,
+# so it is not shortened.
+#
+# It is also where measuring recovery by counting replicas goes wrong. Throughout that
+# minute the orphaned pods keep reporting Running, so "are eight replicas running?" answers
+# yes the whole time and a count-based test would report no outage at all. Recovery here is
+# counted by pod identity: the replicas running when the node died are excluded, so they
+# cannot be mistaken for their own replacements.
+apiVersion: gpu-sim.io/v1alpha1
+kind: Scenario
+metadata:
+  name: fault-killed-node
+  description: A deleted node's work is rescheduled, and the real recovery time is reported.
+
+spec:
+  cluster:
+    topology: ../topologies/two-racks-h100.yaml
+    scheduler: default
+
+  workloads:
+    - name: inference
+      replicas: 8
+      gpus: 1
+
+  faults:
+    - name: a compute node dies
+      at: 30s
+      killNode: gpu-node-1
+
+  assertions:
+    - name: the dead node takes its replicas with it
+      workload: inference
+      disrupted: 2
+
+    - name: and they come back elsewhere, slowly
+      workload: inference
+      # Generous on purpose: the pod garbage collector, not the scheduler, sets this pace.
+      rescheduledWithin: 180s

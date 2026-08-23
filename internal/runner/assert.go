@@ -38,6 +38,15 @@ func (r *Runner) evaluate(ctx context.Context, a scenario.Assertion, replicas in
 			budget = defaultWait
 		}
 		deadline := time.Now().Add(budget)
+
+		// A recovery budget is measured from the fault rather than from now, since that
+		// is the number a user came for: how long the cluster took to heal, not how long
+		// the harness waited after it.
+		if a.RescheduledWithin.Duration > 0 {
+			if _, firedAt, fired := r.disruptedFor(a.Workload); fired {
+				deadline = firedAt.Add(a.RescheduledWithin.Duration)
+			}
+		}
 		for {
 			ok, detail := r.check(ctx, a, replicas)
 			result.Passed, result.Detail = ok, detail
@@ -78,6 +87,10 @@ func (r *Runner) check(ctx context.Context, a scenario.Assertion, replicas int) 
 		return r.checkAllocatedDevices(ctx, a)
 	case a.UnschedulableReason != "":
 		return r.checkUnschedulableReason(ctx, a)
+	case a.Disrupted != nil:
+		return r.checkDisrupted(a)
+	case a.RescheduledWithin.Duration > 0:
+		return r.checkRescheduled(ctx, a, replicas)
 	case a.Fragmentation != nil:
 		return r.checkFragmentation(ctx, a)
 	}
@@ -205,6 +218,55 @@ func (r *Runner) checkUnschedulableReason(ctx context.Context, a scenario.Assert
 	}
 	return false, fmt.Sprintf("no reason contained %q; the scheduler said: %s",
 		a.UnschedulableReason, strings.Join(reasons, " | "))
+}
+
+// checkDisrupted states the blast radius: how many of a workload's running replicas the
+// faults took out.
+func (r *Runner) checkDisrupted(a scenario.Assertion) (bool, string) {
+	uids, _, fired := r.disruptedFor(a.Workload)
+	if !fired {
+		return false, "no fault fired, so nothing was disrupted"
+	}
+	got := len(uids)
+	return got == *a.Disrupted,
+		fmt.Sprintf("the fault took out %d of %q's running replicas, expected %d", got, a.Workload, *a.Disrupted)
+}
+
+// checkRescheduled measures how long the workload took to get back to full strength.
+//
+// Recovery is counted by pod identity, never by number. A replica on a deleted node keeps
+// reporting Running for about a minute, so counting running pods would report full health
+// throughout the outage and this assertion would pass without testing anything. Excluding
+// the disrupted UIDs makes those pods harmless: a corpse is in the set, so it cannot be
+// mistaken for its own replacement.
+func (r *Runner) checkRescheduled(ctx context.Context, a scenario.Assertion, replicas int) (bool, string) {
+	disrupted, firedAt, fired := r.disruptedFor(a.Workload)
+	if !fired {
+		return false, "no fault fired, so there was nothing to recover from"
+	}
+	if len(disrupted) == 0 {
+		return false, fmt.Sprintf("the fault disrupted no replica of %q, so there was nothing to recover from", a.Workload)
+	}
+
+	pods, err := r.client.WorkloadPods(ctx, Namespace, a.Workload)
+	if err != nil {
+		return false, err.Error()
+	}
+
+	healthy := 0
+	for _, pod := range pods {
+		if pod.Status.Phase == corev1.PodRunning && !disrupted[string(pod.UID)] {
+			healthy++
+		}
+	}
+
+	elapsed := time.Since(firedAt).Round(time.Second)
+	if healthy >= replicas {
+		return true, fmt.Sprintf("%d replicas lost, back to %d running %s after the fault",
+			len(disrupted), healthy, elapsed)
+	}
+	return false, fmt.Sprintf("%d replicas lost, only %d of %d running again %s after the fault",
+		len(disrupted), healthy, replicas, elapsed)
 }
 
 // checkFragmentation bounds the partitions lost to fragmentation across the cluster.

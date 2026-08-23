@@ -36,7 +36,67 @@ type Metadata struct {
 type Spec struct {
 	Cluster    Cluster     `json:"cluster"`
 	Workloads  []Workload  `json:"workloads"`
+	Faults     []Fault     `json:"faults,omitempty"`
 	Assertions []Assertion `json:"assertions"`
+}
+
+// Fault breaks something at a point on the scenario's timeline.
+//
+// Faults share the timeline with workload submission and retirement rather than having one
+// of their own: a fault is another event, and two timelines would leave the ordering of a
+// fault and a submission at the same offset undefined.
+type Fault struct {
+	// Name is printed in reports and should say what broke in the real world.
+	Name string `json:"name"`
+
+	At metav1.Duration `json:"at"`
+
+	// Degrade taints devices so the scheduler treats them as unusable. Exactly one of
+	// Degrade and KillNode is set.
+	Degrade *Degrade `json:"degrade,omitempty"`
+
+	// KillNode deletes a simulated node outright.
+	//
+	// Slower and blunter than Degrade: Kubernetes takes about a minute to garbage-collect
+	// the orphaned pods, mirroring a real node's heartbeat lapsing before anything reacts.
+	// Reach for it when the node's disappearance is itself under test; prefer Degrade when
+	// the recovery logic is.
+	KillNode string `json:"killNode,omitempty"`
+}
+
+// Degrade names the devices that break. Exactly one of (Level and Value) or Devices is set.
+type Degrade struct {
+	// Level and Value name a topology level and one of its values — "rack", "rack-2" —
+	// using the same vocabulary a workload uses to ask for placement.
+	Level string `json:"level,omitempty"`
+	Value string `json:"value,omitempty"`
+
+	// Devices matches published device attributes, e.g. {profile: 1g.10gb}. The escape
+	// hatch for anything finer than a topology level.
+	//
+	// Attribute equality rather than the CEL a deviceSelector takes: a selector's CEL is
+	// evaluated by the API server, but a fault's would have to be evaluated here, and
+	// reimplementing DRA's CEL semantics would let a fault taint a different set of devices
+	// than the identical expression selects.
+	Devices map[string]string `json:"devices,omitempty"`
+
+	// Effect defaults to NoExecute. A fault that only blocks new work is a maintenance
+	// window rather than a failure, and what happens to running work is the question.
+	Effect string `json:"effect,omitempty"`
+}
+
+// Taint effects, as the DRA API spells them.
+const (
+	EffectNoExecute  = "NoExecute"
+	EffectNoSchedule = "NoSchedule"
+)
+
+// TaintEffect returns the effect to apply, defaulted.
+func (d Degrade) TaintEffect() string {
+	if d.Effect == "" {
+		return EffectNoExecute
+	}
+	return d.Effect
 }
 
 type Cluster struct {
@@ -118,6 +178,19 @@ type Assertion struct {
 	// AllocatedDevices requires every GPU allocated to the workload to carry these
 	// attribute values. Attribute names are as published, e.g. "numaNode".
 	AllocatedDevices map[string]string `json:"allocatedDevices,omitempty"`
+
+	// Disrupted requires a fault to have taken out exactly this many of the workload's
+	// running replicas. It states the blast radius, which is what a fault-domain test is
+	// actually about, and it catches a fault that fired but hit nothing.
+	Disrupted *int `json:"disrupted,omitempty"`
+
+	// RescheduledWithin requires the workload to be back to full strength within this
+	// long of the fault, counting only replicas the fault did not disrupt.
+	//
+	// Counted by pod identity rather than by number: a pod on a deleted node keeps
+	// reporting Running for about a minute, so a count-based check reports full health
+	// throughout and the assertion would pass without testing anything.
+	RescheduledWithin metav1.Duration `json:"rescheduledWithin,omitempty"`
 
 	// Fragmentation asserts on MIG capacity that is free but unreachable. Unlike the
 	// others it is a property of the cluster rather than of one workload, so it needs no
