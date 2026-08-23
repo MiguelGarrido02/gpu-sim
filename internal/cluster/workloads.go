@@ -65,12 +65,33 @@ func (c *Client) ClearNamespace(ctx context.Context, ns string) error {
 	// PodGroups outlive their Job unless the owner reference catches up, and a stale one
 	// makes the next run's scheduler reasons refer to the previous workload.
 	_ = c.dynamic.Resource(podGroupGVR).Namespace(ns).DeleteCollection(ctx, opts, all)
+	_ = c.dynamic.Resource(volcanoPodGroupGVR).Namespace(ns).DeleteCollection(ctx, opts, all)
 
 	return nil
 }
 
+var volcanoPodGroupGVR = schema.GroupVersionResource{
+	Group:    "scheduling.volcano.sh",
+	Version:  "v1beta1",
+	Resource: "podgroups",
+}
+
 // Submit creates a workload's objects.
+//
+// The PodGroup goes first when there is one: Volcano's webhook rejects a pod naming a group
+// that does not exist yet.
 func (c *Client) Submit(ctx context.Context, ns string, objs *workload.Objects) error {
+	if objs.PodGroup != nil {
+		raw, err := runtime.DefaultUnstructuredConverter.ToUnstructured(objs.PodGroup)
+		if err != nil {
+			return fmt.Errorf("converting PodGroup: %w", err)
+		}
+		_, err = c.dynamic.Resource(volcanoPodGroupGVR).Namespace(ns).Create(
+			ctx, &unstructured.Unstructured{Object: raw}, metav1.CreateOptions{})
+		if err != nil && !apierrors.IsAlreadyExists(err) {
+			return fmt.Errorf("creating PodGroup %s: %w", objs.PodGroup.Metadata.Name, err)
+		}
+	}
 	if objs.ClaimTemplate != nil {
 		if _, err := c.kube.ResourceV1().ResourceClaimTemplates(ns).Create(
 			ctx, objs.ClaimTemplate, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
@@ -321,6 +342,7 @@ func (c *Client) Retire(ctx context.Context, ns, name string) error {
 	if err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("retiring job %s: %w", name, err)
 	}
+	_ = c.dynamic.Resource(volcanoPodGroupGVR).Namespace(ns).Delete(ctx, name, opts)
 
 	// Wait for the pods to go, or the partitions they hold would still be allocated when
 	// the next event fires and the release this call exists to cause would not have

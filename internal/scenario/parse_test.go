@@ -39,8 +39,8 @@ func TestValidateRejects(t *testing.T) {
 	}{
 		{
 			name:    "unknown scheduler",
-			mutate:  func(s *Scenario) { s.Spec.Cluster.Scheduler = "volcano" },
-			wantErr: `scheduler is "volcano"`,
+			mutate:  func(s *Scenario) { s.Spec.Cluster.Scheduler = "yunikorn" },
+			wantErr: `scheduler is "yunikorn"`,
 		},
 		{
 			name:    "no topology",
@@ -344,5 +344,22 @@ func TestDefaultTaintEffectIsNoExecute(t *testing.T) {
 	}
 	if got := (Degrade{Effect: EffectNoSchedule}).TaintEffect(); got != EffectNoSchedule {
 		t.Errorf("explicit effect = %q, want it respected", got)
+	}
+}
+
+// TestSchedulersAreAccepted keeps the list of targets and the validation in step: adding a
+// scheduler to Schedulers() without teaching Validate about it would reject every scenario
+// that named it.
+func TestSchedulersAreAccepted(t *testing.T) {
+	for _, name := range Schedulers() {
+		s := valid()
+		s.Spec.Cluster.Scheduler = Scheduler(name)
+		// The default scheduler cannot express a gang, and the fixture declares one.
+		if Scheduler(name) == SchedulerDefault {
+			s.Spec.Workloads[0].Gang = false
+		}
+		if err := s.Validate(); err != nil {
+			t.Errorf("Validate rejected scheduler %q: %v", name, err)
+		}
 	}
 }

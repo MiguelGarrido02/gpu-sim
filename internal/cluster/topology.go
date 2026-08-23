@@ -4,6 +4,13 @@ import (
 	"context"
 	"fmt"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+
 	"github.com/MiguelGarrido02/gpu-sim/internal/generate"
 	"github.com/MiguelGarrido02/gpu-sim/internal/topology"
 )
@@ -72,6 +79,9 @@ func (c *Client) ApplyTopology(ctx context.Context, path string) (*TopologyResul
 	if err := c.ApplyKAITopology(ctx, kaiTopology); err != nil {
 		return nil, fmt.Errorf("applying scheduler topology: %w", err)
 	}
+	if err := c.applyHyperNodes(ctx, resolved); err != nil {
+		return nil, fmt.Errorf("applying Volcano topology: %w", err)
+	}
 
 	// Pruning last, so a failure above leaves the previous cluster intact rather than a
 	// half-deleted one.
@@ -104,4 +114,66 @@ func resolvedHasMIG(resolved *topology.Resolved) bool {
 		}
 	}
 	return false
+}
+
+var hyperNodeGVR = schema.GroupVersionResource{
+	Group:    "topology.volcano.sh",
+	Version:  "v1alpha1",
+	Resource: "hypernodes",
+}
+
+// applyHyperNodes writes Volcano's topology tree, and removes the ones a previous topology
+// left behind.
+//
+// Skipped silently when the CRD is absent, since Volcano is optional: a cluster running only
+// KAI should not fail to build because a scheduler it does not have is not installed.
+func (c *Client) applyHyperNodes(ctx context.Context, resolved *topology.Resolved) error {
+	nodes := generate.VolcanoHyperNodes(resolved)
+	hyperNodes := c.dynamic.Resource(hyperNodeGVR)
+
+	keep := make(map[string]bool, len(nodes))
+	for _, hn := range nodes {
+		keep[hn.Metadata.Name] = true
+
+		raw, err := runtime.DefaultUnstructuredConverter.ToUnstructured(hn)
+		if err != nil {
+			return fmt.Errorf("converting HyperNode %s: %w", hn.Metadata.Name, err)
+		}
+		obj := &unstructured.Unstructured{Object: raw}
+
+		existing, err := hyperNodes.Get(ctx, hn.Metadata.Name, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			if _, err := hyperNodes.Create(ctx, obj, metav1.CreateOptions{}); err != nil {
+				return fmt.Errorf("creating HyperNode %s: %w", hn.Metadata.Name, err)
+			}
+			continue
+		}
+		if err != nil {
+			if meta.IsNoMatchError(err) || apierrors.IsNotFound(err) {
+				return nil // Volcano is not installed
+			}
+			return fmt.Errorf("reading HyperNode %s: %w", hn.Metadata.Name, err)
+		}
+		obj.SetResourceVersion(existing.GetResourceVersion())
+		if _, err := hyperNodes.Update(ctx, obj, metav1.UpdateOptions{}); err != nil {
+			return fmt.Errorf("updating HyperNode %s: %w", hn.Metadata.Name, err)
+		}
+	}
+
+	existing, err := hyperNodes.List(ctx, metav1.ListOptions{LabelSelector: generate.ManagedSelector})
+	if err != nil {
+		if meta.IsNoMatchError(err) {
+			return nil
+		}
+		return fmt.Errorf("listing managed HyperNodes: %w", err)
+	}
+	for _, hn := range existing.Items {
+		if keep[hn.GetName()] {
+			continue
+		}
+		if err := hyperNodes.Delete(ctx, hn.GetName(), metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("deleting HyperNode %s: %w", hn.GetName(), err)
+		}
+	}
+	return nil
 }

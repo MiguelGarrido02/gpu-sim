@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"sigs.k8s.io/yaml"
 )
@@ -59,13 +60,13 @@ func (s *Scenario) Validate() error {
 		errs = append(errs, errors.New("spec.cluster.topology is required"))
 	}
 	switch s.Spec.Cluster.Scheduler {
-	case SchedulerKAI, SchedulerDefault:
+	case SchedulerKAI, SchedulerVolcano, SchedulerDefault:
 	case "":
-		errs = append(errs, fmt.Errorf("spec.cluster.scheduler is required, want %q or %q",
-			SchedulerKAI, SchedulerDefault))
+		errs = append(errs, fmt.Errorf("spec.cluster.scheduler is required, want one of %s",
+			strings.Join(Schedulers(), ", ")))
 	default:
-		errs = append(errs, fmt.Errorf("spec.cluster.scheduler is %q, want %q or %q",
-			s.Spec.Cluster.Scheduler, SchedulerKAI, SchedulerDefault))
+		errs = append(errs, fmt.Errorf("spec.cluster.scheduler is %q, want one of %s",
+			s.Spec.Cluster.Scheduler, strings.Join(Schedulers(), ", ")))
 	}
 	if len(s.Spec.Workloads) == 0 {
 		errs = append(errs, errors.New("spec.workloads is empty"))

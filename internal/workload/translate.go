@@ -71,6 +71,9 @@ type Objects struct {
 	ClaimTemplate *resourceapi.ResourceClaimTemplate
 	Job           *batchv1.Job
 	Deployment    *appsv1.Deployment
+
+	// PodGroup is set for Volcano, which keeps both gang size and topology on the group.
+	PodGroup *VolcanoPodGroup
 }
 
 // Translate builds the objects for a workload. topologyName is the name of the applied
@@ -83,6 +86,10 @@ func Translate(w scenario.Workload, sched scenario.Scheduler, namespace, topolog
 	objs := &Objects{}
 	if w.GPUs > 0 {
 		objs.ClaimTemplate = claimTemplate(w, namespace)
+	}
+	if sched == scenario.SchedulerVolcano {
+		objs.PodGroup = volcanoPodGroup(w)
+		objs.PodGroup.Metadata.Namespace = namespace
 	}
 
 	spec := podSpec(w, sched, namespace)
@@ -176,8 +183,11 @@ func podSpec(w scenario.Workload, sched scenario.Scheduler, namespace string) co
 		}},
 	}
 
-	if sched == scenario.SchedulerKAI {
+	switch sched {
+	case scenario.SchedulerKAI:
 		spec.SchedulerName = kaiSchedulerName
+	case scenario.SchedulerVolcano:
+		spec.SchedulerName = volcanoSchedulerName
 	}
 
 	if w.GPUs > 0 {
@@ -198,6 +208,17 @@ func podLabels(w scenario.Workload, sched scenario.Scheduler) map[string]string 
 		labels[kaiQueueLabel] = kaiDefaultQueue
 	}
 	return labels
+}
+
+// podAnnotations carries whatever the target scheduler reads off the pod rather than off a
+// separate object.
+func podAnnotations(w scenario.Workload, sched scenario.Scheduler) map[string]string {
+	if sched != scenario.SchedulerVolcano {
+		return nil
+	}
+	// Volcano associates a plain pod with its PodGroup here; without it the pods are
+	// scheduled independently and the gang means nothing.
+	return map[string]string{volcanoGroupAnnotation: w.Name}
 }
 
 // LabelWorkload marks every pod with the workload it came from, which is how assertions
@@ -226,8 +247,11 @@ func job(w scenario.Workload, sched scenario.Scheduler, namespace, topologyName 
 			Parallelism: &replicas,
 			Completions: &replicas,
 			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: podLabels(w, sched)},
-				Spec:       spec,
+				ObjectMeta: metav1.ObjectMeta{
+					Labels:      podLabels(w, sched),
+					Annotations: podAnnotations(w, sched),
+				},
+				Spec: spec,
 			},
 		},
 	}
@@ -250,8 +274,11 @@ func deployment(w scenario.Workload, sched scenario.Scheduler, namespace string,
 			Replicas: &replicas,
 			Selector: &metav1.LabelSelector{MatchLabels: selector},
 			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: podLabels(w, sched)},
-				Spec:       spec,
+				ObjectMeta: metav1.ObjectMeta{
+					Labels:      podLabels(w, sched),
+					Annotations: podAnnotations(w, sched),
+				},
+				Spec: spec,
 			},
 		},
 	}

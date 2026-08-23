@@ -171,14 +171,19 @@ quietly downgraded the job.
 
 ```yaml
 cluster:
-  scheduler: kai      # or: default
+  scheduler: kai      # or: volcano, default
 ```
 
-| Intent | `kai` | `default` |
-|---|---|---|
-| `deviceSelector` | ✅ | ✅ — identical, it is core DRA |
-| `gang` | ✅ | ❌ |
-| `placement.required` | ✅ | ❌ |
+| Intent | `kai` | `volcano` | `default` |
+|---|---|---|---|
+| `deviceSelector` | ✅ | ✅ | ✅ — identical, it is core DRA |
+| `gang` | ✅ | ✅ | ❌ |
+| `placement.required` | ✅ | ⚠️ | ❌ |
+
+⚠️ Volcano has network topology aware scheduling and gpu-sim generates the `HyperNode` tree
+it reads, but the constraint is **not honoured for workloads whose GPUs come through DRA** —
+the identical job with plain CPU requests is confined correctly. Reported rather than worked
+around; see [`designs/volcano-support.md`](designs/volcano-support.md).
 
 A scheduler that cannot express a declared intent **fails the scenario by name**, rather
 than quietly running something weaker:
@@ -291,6 +296,7 @@ automatically.
 | `mig-fragmentation` | releasing partitions out of order strands capacity nothing can reach |
 | `fault-degraded-rack` | tainted GPUs evict their work, which lands on the surviving rack in seconds |
 | `fault-killed-node` | a deleted node's work returns after the real garbage-collection delay |
+| `volcano-gang` | the same intent, aimed at Volcano: a gang is placed and a selector still filters |
 
 Every positive case is paired with a negative one. A suite that only asserts success passes
 just as happily against a scheduler that ignores the constraint entirely — which is exactly

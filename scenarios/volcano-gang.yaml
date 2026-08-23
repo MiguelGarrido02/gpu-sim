@@ -1,0 +1,57 @@
+# The same gang as gang-oversized, aimed at Volcano instead of KAI.
+#
+# Only `scheduler:` differs. The workload states intent — twelve replicas, all or nothing —
+# and gpu-sim translates it into each scheduler's own terms: KAI takes an annotation on a
+# Job, Volcano takes a PodGroup with a minMember. That one file works on both is the point
+# of stating intent rather than annotations, and Volcano is what proves the neutral layer
+# was not simply KAI's vocabulary with the serial numbers filed off.
+#
+# Two things this deliberately does not assert, both recorded in
+# docs/designs/volcano-support.md rather than quietly rewritten until they passed:
+#
+#   Topology placement. Volcano has network topology aware scheduling and reads the HyperNode
+#   tree gpu-sim publishes — its own logs confirm the tiers — but the constraint is not
+#   honoured for workloads whose GPUs come through DRA. The identical job with plain CPU
+#   requests is confined correctly.
+#
+#   The oversized-gang negative. KWOK completes a Job's pods the moment they bind, so a Job
+#   churns through capacity rather than holding it, and Volcano admits all forty replicas of a
+#   gang that cannot fit. Telling "Volcano's guarantee is weaker" from "the simulation cannot
+#   ask Volcano this question" needs a gang whose pods hold their GPUs, which is neither a Job
+#   nor a Deployment. That gap is gpu-sim's, not Volcano's.
+apiVersion: gpu-sim.io/v1alpha1
+kind: Scenario
+metadata:
+  name: volcano-gang
+  description: Volcano places a 12-GPU gang on simulated hardware, through DRA.
+
+spec:
+  cluster:
+    topology: ../topologies/two-racks-h100.yaml
+    scheduler: volcano
+
+  workloads:
+    - name: training
+      replicas: 12
+      gpus: 1
+      gang: true
+
+    # A Deployment rather than a gang, so its pods hold their GPUs long enough to be
+    # counted. Asking for more than the selector can satisfy is what makes the second
+    # assertion a real test: an ignored selector would place all twenty.
+    - name: numa0-only
+      replicas: 20
+      gpus: 1
+      deviceSelector: device.attributes['gpu.nvidia.com'].numaNode == 0
+      submitAt: 60s
+
+  assertions:
+    - name: the gang that fits is placed
+      workload: training
+      scheduled: all
+      within: 120s
+
+    - name: and a device selector still filters under Volcano
+      workload: numa0-only
+      running: 16
+      within: 120s

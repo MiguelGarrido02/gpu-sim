@@ -16,8 +16,14 @@ type Scheduler string
 
 const (
 	SchedulerKAI     Scheduler = "kai"
+	SchedulerVolcano Scheduler = "volcano"
 	SchedulerDefault Scheduler = "default"
 )
+
+// Schedulers lists every target, for error messages.
+func Schedulers() []string {
+	return []string{string(SchedulerKAI), string(SchedulerVolcano), string(SchedulerDefault)}
+}
 
 type Scenario struct {
 	APIVersion string   `json:"apiVersion"`
