@@ -178,3 +178,61 @@ func TestValidateReportsEveryProblem(t *testing.T) {
 		}
 	}
 }
+
+// TestValidateRejectsRetirementBeforeSubmission guards a timeline that cannot happen. A
+// workload retired before it is submitted would silently never run, and the scenario would
+// then assert against an empty cluster.
+func TestValidateRejectsRetirementBeforeSubmission(t *testing.T) {
+	s := valid()
+	s.Spec.Workloads[0].SubmitAt = metav1.Duration{Duration: 60 * time.Second}
+	s.Spec.Workloads[0].RetireAt = metav1.Duration{Duration: 30 * time.Second}
+
+	err := s.Validate()
+	if err == nil {
+		t.Fatal("Validate accepted a workload retired before it is submitted")
+	}
+	if !strings.Contains(err.Error(), "not after it is submitted") {
+		t.Errorf("error %q does not explain the problem", err)
+	}
+}
+
+func TestValidateAcceptsRetirement(t *testing.T) {
+	s := valid()
+	s.Spec.Workloads[0].SubmitAt = metav1.Duration{Duration: 20 * time.Second}
+	s.Spec.Workloads[0].RetireAt = metav1.Duration{Duration: 60 * time.Second}
+
+	if err := s.Validate(); err != nil {
+		t.Errorf("Validate rejected a valid retirement: %v", err)
+	}
+}
+
+// TestFragmentationAssertionNeedsNoWorkload covers the one assertion that is about the
+// cluster rather than about a workload.
+func TestFragmentationAssertionNeedsNoWorkload(t *testing.T) {
+	atLeast := 3
+	s := valid()
+	s.Spec.Assertions = []Assertion{{
+		Name:          "capacity is stranded",
+		Fragmentation: &FragmentationAssertion{AtLeast: &atLeast},
+	}}
+
+	if err := s.Validate(); err != nil {
+		t.Errorf("Validate rejected a workload-free fragmentation assertion: %v", err)
+	}
+}
+
+func TestFragmentationAssertionNeedsABound(t *testing.T) {
+	s := valid()
+	s.Spec.Assertions = []Assertion{{
+		Name:          "capacity is stranded",
+		Fragmentation: &FragmentationAssertion{},
+	}}
+
+	err := s.Validate()
+	if err == nil {
+		t.Fatal("Validate accepted a fragmentation assertion with no bound")
+	}
+	if !strings.Contains(err.Error(), "neither atLeast nor atMost") {
+		t.Errorf("error %q does not explain the problem", err)
+	}
+}

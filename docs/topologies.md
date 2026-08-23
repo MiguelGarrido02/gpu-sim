@@ -78,6 +78,44 @@ unschedulable on the first and schedules on the second — the same workload, th
 scheduler, a different answer. Reproducing that is what `scenarios/nvlink-gang-dgx.yaml` and
 `scenarios/nvlink-gang-nvl72.yaml` do, and the reason the project exists.
 
+### MIG
+
+A pool can publish its GPUs as MIG partitions instead of as whole devices:
+
+```yaml
+nodePools:
+  dgx-h100-mig:
+    profile: h100
+    gpuCount: 8
+    nvlink: full-mesh
+    mig:
+      enabled: true
+      profiles: [1g.10gb, 2g.20gb, 3g.40gb]   # optional; omitted means all of them
+```
+
+Without a `mig` block nothing changes, so every topology written before this existed still
+behaves the same way.
+
+With it, each GPU publishes **every partition it could be cut into** — for an H100 that is
+21 (profile, placement) combinations — and Kubernetes enforces which of them conflict
+through shared counters. Publishing the full set rather than one fixed layout is what makes
+fragmentation emerge from the order workloads arrive and depart, rather than from this file.
+
+Only `a100` and `h100` are modelled, because those are the profile tables NVIDIA publishes
+and therefore the only ones that could be verified. Any other GPU profile is refused by
+name rather than guessed at.
+
+A MIG-enabled GPU is not published as a whole device: on real hardware it is not directly
+allocatable, and the whole GPU is simply the largest profile. Partitions are selected
+through their own `mig.nvidia.com` device class, so a workload asking for a GPU never
+receives a slice of one.
+
+Two consequences worth knowing. Partitions are stored using the `DRAPartitionableDevices`
+feature; if a cluster has it disabled, `gpu-sim` refuses to publish rather than produce a
+cluster that would appear to hold several whole GPUs where it has one. And **KAI Scheduler
+v0.17.0 cannot allocate partitionable devices at all** — MIG works under the stock
+kube-scheduler, and the same claim stays pending under KAI.
+
 `faultDomain` is the blast radius: what goes down together. Several racks may share one
 when they sit behind the same power or cooling. Nothing consumes it yet beyond selection;
 Phase 4's fault injection is what it is there for.
@@ -166,6 +204,8 @@ Worked examples of all of these, each paired with a case that must *not* schedul
 |---|---|
 | [`two-racks-h100.yaml`](../topologies/two-racks-h100.yaml) | 2 racks × 2 DGX H100 nodes. 32 GPUs, four 8-GPU NVLink domains, two fault domains. |
 | [`gb200-nvl72.yaml`](../topologies/gb200-nvl72.yaml) | One NVL72 rack: 18 trays × 4 GPUs. 72 GPUs in a single NVLink domain. |
+| [`h100-mig.yaml`](../topologies/h100-mig.yaml) | 2 MIG-enabled DGX H100 nodes. 16 GPUs published as 336 partitions. |
+| [`single-h100-mig.yaml`](../topologies/single-h100-mig.yaml) | One MIG-enabled GPU. Deterministic placement, for reasoning about fragmentation by hand. |
 
 ## Things worth knowing
 

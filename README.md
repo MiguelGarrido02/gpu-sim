@@ -7,8 +7,8 @@ Dynamic Resource Allocation (DRA) `ResourceSlice`s and multi-node ComputeDomains
 that platform and MLOps teams can validate scheduling policies before they touch
 hardware that costs €30,000–€300,000 per node.
 
-> **Status: early development.** Topology modelling and the scenario harness work end to
-> end; MIG partitioning and fault injection do not exist yet. See
+> **Status: early development.** Topology modelling, MIG partitioning and the scenario
+> harness work end to end; fault injection does not exist yet. See
 > [`docs/PLAN.md`](docs/PLAN.md) for the roadmap and [`docs/AUDIT.md`](docs/AUDIT.md) for
 > what the underlying stack does and does not provide.
 

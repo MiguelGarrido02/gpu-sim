@@ -61,7 +61,9 @@ aimed at more than one scheduler.
 | `gang` | all-or-nothing: either every replica is placed or none is |
 | `placement.required` | a topology level every replica must share — `fault-domain`, `rack`, `nvlink-domain`, `host` |
 | `deviceSelector` | a CEL expression filtering which GPUs qualify |
+| `migProfile` | ask for a MIG partition of that profile (`1g.10gb`) rather than a whole GPU |
 | `submitAt` | delay before submitting, relative to the start of the run |
+| `retireAt` | delete the workload at that offset, releasing whatever it held |
 
 `deviceSelector` is deliberately raw CEL rather than a neutral wrapper. Device selection is
 core DRA and already portable across schedulers, so wrapping it would only hide the
@@ -72,8 +74,11 @@ deviceSelector: device.attributes['gpu.nvidia.com'].numaNode == 0
 deviceSelector: device.attributes['gpu-sim.io'].nvlinkPeerCount >= 7
 ```
 
-`submitAt` is not decoration. Arrival order decides fragmentation: the same partitions
-arriving in a different order leave a GPU usable or useless.
+`retireAt` is not a tidy-up step but part of the experiment. The DRA allocator packs, so a
+run that only ever submits leaves GPUs either full or untouched; fragmentation appears when
+partitions are released out of the order they were taken, which is the state a real cluster
+spends most of its life in. The runner waits for the workload's pods to actually go before
+moving on, since the release is the point.
 
 ### What a workload becomes is not configurable
 
@@ -125,6 +130,12 @@ silently, which is the worst thing a test framework can do.
 | `confinedTo: <level>` | every placed replica shares one value of that topology level |
 | `allocatedDevices: {attr: value}` | every GPU allocated to the workload has these attributes |
 | `unschedulableReason: <substring>` | the scheduler's own explanation contains this text |
+| `fragmentation: {atLeast, atMost}` | MIG capacity lost to fragmentation, cluster-wide |
+
+`fragmentation` is the only assertion about the cluster rather than about one workload, so
+it takes no `workload`. It is bounded rather than exact because the figure depends on which
+placements the scheduler chose, and pinning it would assert the allocator's current packing
+strategy instead of the property under test.
 
 `scheduled` and `running` differ: a replica can be placed on a node and not yet running, and
 a device-selector test cares about the second.
@@ -195,6 +206,8 @@ automatically.
 | `nvlink-gang-dgx` | a 32-GPU single-domain job does not fit DGX H100 |
 | `nvlink-gang-nvl72` | the identical job fits GB200 NVL72 |
 | `default-scheduler` | the simulated GPUs work with no KAI at all |
+| `mig-partition-limit` | MIG partitions are capped at what the hardware holds — seven per GPU, not eight |
+| `mig-fragmentation` | releasing partitions out of order strands capacity nothing can reach |
 
 Every positive case is paired with a negative one. A suite that only asserts success passes
 just as happily against a scheduler that ignores the constraint entirely — which is exactly
