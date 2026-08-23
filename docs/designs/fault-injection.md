@@ -1,6 +1,6 @@
 # Design: fault injection
 
-_Phase 4, stage B. Status: proposed._
+_Phase 4. Status: implemented._
 
 Hardware fails. A scheduler's behaviour when it does — how fast it notices, where it puts
 the work instead, whether it still honours the constraints it was given — is the part

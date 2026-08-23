@@ -7,8 +7,9 @@ Dynamic Resource Allocation (DRA) `ResourceSlice`s and multi-node ComputeDomains
 that platform and MLOps teams can validate scheduling policies before they touch
 hardware that costs €30,000–€300,000 per node.
 
-> **Status: early development.** Topology modelling, MIG partitioning and the scenario
-> harness work end to end; fault injection does not exist yet. See
+> **Status: early development.** Every simulation layer works end to end — topology, MIG
+> partitioning, the scenario harness and fault injection. What remains is packaging: there
+> is no released binary yet, so `gpu-sim` is run from source. See
 > [`docs/PLAN.md`](docs/PLAN.md) for the roadmap and [`docs/AUDIT.md`](docs/AUDIT.md) for
 > what the underlying stack does and does not provide.
 
@@ -81,13 +82,13 @@ Both are scenarios, so the comparison is one command:
 $ gpu-sim run scenarios/nvlink-gang-dgx.yaml scenarios/nvlink-gang-nvl72.yaml
 
 ==> nvlink-gang-dgx
-    cluster two-racks-h100 · 4 nodes · 32 GPUs · scheduler kai
+    cluster two-racks-h100 · 4 nodes · 32 devices · scheduler kai
   PASS the job is refused outright
   PASS because a DGX NVLink domain holds only 8 GPUs
        the scheduler said: node-group fd-1.rack-1.gpu-node-1 can allocate only 8 of 32 required pods
 
 ==> nvlink-gang-nvl72
-    cluster gb200-nvl72 · 18 nodes · 72 GPUs · scheduler kai
+    cluster gb200-nvl72 · 18 nodes · 72 devices · scheduler kai
   PASS every replica is placed
   PASS and the whole job stays inside one NVLink domain
        all 32 placed replicas are in nvlink-domain "nvl72-1"
@@ -130,6 +131,42 @@ gpu-sim run scenarios/ --json results.json # plus machine-readable output for CI
 
 [`docs/scenarios.md`](docs/scenarios.md) covers every field, the assertion vocabulary, and
 why `within` and `settle` are different words.
+
+## Faults
+
+A scenario can break the hardware while work is running on it, and assert how the scheduler
+recovers.
+
+```yaml
+faults:
+  - name: rack 1 loses its GPUs
+    at: 30s
+    degrade: { level: rack, value: rack-1 }
+
+assertions:
+  - { name: half the job is lost,        workload: inference, disrupted: 4 }
+  - { name: and it comes back,           workload: inference, rescheduledWithin: 90s }
+  - { name: on the surviving rack alone, workload: inference, confinedTo: rack }
+```
+
+```
+injecting fault: rack 1 loses its GPUs
+16 devices degraded, 4 replicas lost
+
+PASS  and it comes back
+      4 replicas lost, back to 8 running 2s after the fault
+PASS  on the surviving rack alone
+      all 8 placed replicas are in rack "rack-2"
+```
+
+`degrade` taints devices, so Kubernetes does the evicting and rescheduling and what gets
+measured is its reaction. `killNode` deletes a node instead, and reports the slower truth:
+about a minute, because that is how long the pod garbage collector really takes.
+
+**Recovery is counted by pod identity, never by number.** A replica on a deleted node keeps
+reporting `Running` for that whole minute, so "are eight replicas running?" answers yes
+throughout the outage — which is why a naive check reports a recovery time of zero where
+gpu-sim reports `1m2s`. A fault that disrupts nothing fails rather than passing vacuously.
 
 ## Why
 
