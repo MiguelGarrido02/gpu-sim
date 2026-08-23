@@ -311,6 +311,27 @@ assertions spends most of its wall time deliberately waiting.
 **The namespace is `gpu-sim-scenarios`** and is cleared before each scenario. Do not put
 anything there you want to keep.
 
+**KAI decides at startup whether DRA exists, and never re-checks.** If its binder restarts
+while the cluster is in a transient state — mid-suite, say, between two scenarios that
+replace the nodes — it comes back believing DRA is unavailable and refuses every claim
+afterwards:
+
+```
+pod ... cannot be scheduled, it references resource claims <gpu>
+while dynamic resource allocation is not available in the cluster
+```
+
+The message is misleading: DRA is available, and the stock scheduler places the same pod
+without complaint. Every later scenario in the run then fails for a reason that has nothing
+to do with what it was testing. The fix is to restart KAI:
+
+```bash
+kubectl rollout restart deploy -n kai-scheduler
+```
+
+If a run shows a block of consecutive KAI scenarios failing where earlier ones passed, check
+for this before believing the failures.
+
 **KAI's default queues carry a GPU quota of zero**, which silently refuses non-gang
 workloads. `hack/install-kai.sh` clears it; see [`topologies.md`](topologies.md) for the
 details.
