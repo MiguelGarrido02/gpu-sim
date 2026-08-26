@@ -101,9 +101,31 @@ With it, each GPU publishes **every partition it could be cut into** — for an 
 through shared counters. Publishing the full set rather than one fixed layout is what makes
 fragmentation emerge from the order workloads arrive and depart, rather than from this file.
 
-Only `a100` and `h100` are modelled, because those are the profile tables NVIDIA publishes
-and therefore the only ones that could be verified. Any other GPU profile is refused by
-name rather than guessed at.
+MIG is modelled for `a100`, `h100`, `h200` and `b200` — the models whose profile tables
+NVIDIA publishes, and therefore the only ones that could be checked rather than invented.
+Any other GPU profile is refused by name.
+
+Two absences are deliberate. `gb300` and `b300` have no published table at all, and the
+figures circulating in secondary sources disagree with each other. `gb200` is a softer case:
+its GPUs are B200 dies, so the B200 table is very likely correct — but a simulation built on
+"very likely" is how a tool ends up confidently wrong, which is the failure mode this
+project exists to avoid. `l40s` and `t4` do not support MIG on real hardware either.
+
+`h200` is not one of the profiles fake-gpu-operator ships. To use it, add it through the
+operator's `customProfiles` values, which creates a `gpu-profile-h200` ConfigMap that
+`gpu-sim` then reads like any builtin:
+
+```yaml
+customProfiles:
+  h200:
+    profile.yaml: |
+      # a full mock-NVML profile; copying the builtin h100 one and changing the product
+      # name and memory is enough for scheduling tests
+```
+
+The same path is how any GPU the operator does not ship is added — a B300, a newer part, or
+a fictional one. Note that MIG additionally requires a geometry in `internal/mig`, so a
+custom profile gets whole-GPU simulation for free but MIG only for the four models above.
 
 A MIG-enabled GPU is not published as a whole device: on real hardware it is not directly
 allocatable, and the whole GPU is simply the largest profile. Partitions are selected

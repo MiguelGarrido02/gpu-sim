@@ -38,37 +38,68 @@ type Profile struct {
 	SMSlices int
 }
 
-// geometries covers the two GPU families whose profile tables are published in NVIDIA's
-// MIG user guide and could therefore be verified.
+// datacenterShape is the partition layout every MIG-capable datacenter GPU has presented
+// from Ampere through Blackwell: 8 memory slices, 7 SM slices, and these six profiles in
+// this order.
 //
-// Deliberately not extended by guesswork to B200 or GB200: an invented profile table would
-// produce a simulation that is confidently wrong, which is worse than one that refuses.
-// PartitionsFor returns an error for anything not listed here.
+// Reading NVIDIA's tables for A100, H100, H200 and B200 side by side, the slice columns are
+// identical and only the memory labels move. Writing the shape once says so in code, and
+// makes a mistyped slice count impossible to introduce for one model alone.
+var datacenterShape = []Profile{
+	{MemorySlices: 1, SMSlices: 1},
+	{MemorySlices: 2, SMSlices: 1},
+	{MemorySlices: 2, SMSlices: 2},
+	{MemorySlices: 4, SMSlices: 3},
+	{MemorySlices: 4, SMSlices: 4},
+	{MemorySlices: 8, SMSlices: 7},
+}
+
+// datacenterGeometry names the shared shape for one GPU model.
+//
+// The names are transcribed from NVIDIA's table rather than derived from memory, because
+// they are not derivable: a B200 memory slice is 22.5 GB and NVIDIA prints it `23gb`, while
+// an H200 slice is 17.6 GB and prints `18gb`. Rounding that by hand from a capacity would be
+// guessing at a published string.
+func datacenterGeometry(names ...string) Geometry {
+	if len(names) != len(datacenterShape) {
+		panic(fmt.Sprintf("datacenterGeometry: got %d names, want %d", len(names), len(datacenterShape)))
+	}
+	g := Geometry{MemorySlices: 8, SMSlices: 7}
+	for i, name := range names {
+		p := datacenterShape[i]
+		p.Name = name
+		g.Profiles = append(g.Profiles, p)
+	}
+	return g
+}
+
+// geometries covers the GPU models whose profile tables are published in NVIDIA's MIG user
+// guide and could therefore be verified against it.
+//
+// Still deliberately absent, and refused by name rather than guessed at: GB300 and B300,
+// whose tables NVIDIA does not publish — the figures circulating in secondary sources
+// disagree with each other on both memory per instance and the total. GB200 is absent for a
+// softer reason: its GPUs are B200 dies, so the B200 table is very likely right, but
+// "very likely" is how a simulation ends up confidently wrong.
+//
+// The models here are all 8/7 datacenter parts. A30 and the RTX PRO Blackwell cards have
+// genuinely different geometries (4/4 and 2/2) and would need their own shapes; none of them
+// is a profile fake-gpu-operator publishes. L40S and T4 do not support MIG at all.
+//
+// Each model is pinned to NVIDIA's max-instances column by TestMaxInstancesMatchesNVIDIA.
 var geometries = map[string]Geometry{
-	"h100": {
-		MemorySlices: 8,
-		SMSlices:     7,
-		Profiles: []Profile{
-			{Name: "1g.10gb", MemorySlices: 1, SMSlices: 1},
-			{Name: "1g.20gb", MemorySlices: 2, SMSlices: 1},
-			{Name: "2g.20gb", MemorySlices: 2, SMSlices: 2},
-			{Name: "3g.40gb", MemorySlices: 4, SMSlices: 3},
-			{Name: "4g.40gb", MemorySlices: 4, SMSlices: 4},
-			{Name: "7g.80gb", MemorySlices: 8, SMSlices: 7},
-		},
-	},
-	"a100": {
-		MemorySlices: 8,
-		SMSlices:     7,
-		Profiles: []Profile{
-			{Name: "1g.5gb", MemorySlices: 1, SMSlices: 1},
-			{Name: "1g.10gb", MemorySlices: 2, SMSlices: 1},
-			{Name: "2g.10gb", MemorySlices: 2, SMSlices: 2},
-			{Name: "3g.20gb", MemorySlices: 4, SMSlices: 3},
-			{Name: "4g.20gb", MemorySlices: 4, SMSlices: 4},
-			{Name: "7g.40gb", MemorySlices: 8, SMSlices: 7},
-		},
-	},
+	// A100-SXM4-40GB, which is the A100 variant fake-gpu-operator's profile declares.
+	"a100": datacenterGeometry("1g.5gb", "1g.10gb", "2g.10gb", "3g.20gb", "4g.20gb", "7g.40gb"),
+
+	// H100 80GB, PCIe and SXM5 alike. The 94GB and 96GB variants use different labels.
+	"h100": datacenterGeometry("1g.10gb", "1g.20gb", "2g.20gb", "3g.40gb", "4g.40gb", "7g.80gb"),
+
+	// H200 141GB. Reachable through the operator's customProfiles rather than a builtin.
+	"h200": datacenterGeometry("1g.18gb", "1g.35gb", "2g.35gb", "3g.71gb", "4g.71gb", "7g.141gb"),
+
+	// B200 180GB, the production HGX/DGX specification. See docs/designs/mig-model.md for
+	// why this disagrees with the 192 GiB the upstream b200 profile declares.
+	"b200": datacenterGeometry("1g.23gb", "1g.45gb", "2g.45gb", "3g.90gb", "4g.90gb", "7g.180gb"),
 }
 
 // GeometryFor returns the MIG layout of a GPU profile, by the name a topology uses.
@@ -77,7 +108,7 @@ func GeometryFor(gpuProfile string) (Geometry, error) {
 	if !ok {
 		return Geometry{}, fmt.Errorf(
 			"MIG is not modelled for GPU profile %q; gpu-sim knows %s, whose profile tables NVIDIA publishes",
-			gpuProfile, strings.Join(SupportedProfiles(), " and "))
+			gpuProfile, strings.Join(SupportedProfiles(), ", "))
 	}
 	return g, nil
 }

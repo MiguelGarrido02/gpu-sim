@@ -73,6 +73,59 @@ pool of seven, and every documented maximum falls out:
 Every row matches NVIDIA's table. **That becomes a unit test**: if the model ever produces
 a different maximum for any profile, the geometry is wrong and the build fails.
 
+### One shape, four models
+
+The model was first built for A100 and H100 only, on the grounds that those were the tables
+that could be verified. Re-reading NVIDIA's page later turned up something better: **H200
+and B200 have published tables too, and all four are the same table.**
+
+| | A100 40GB | H100 80GB | H200 141GB | B200 180GB |
+|---|---|---|---|---|
+| 1 mem / 1 SM | `1g.5gb` | `1g.10gb` | `1g.18gb` | `1g.23gb` |
+| 2 mem / 1 SM | `1g.10gb` | `1g.20gb` | `1g.35gb` | `1g.45gb` |
+| 2 mem / 2 SM | `2g.10gb` | `2g.20gb` | `2g.35gb` | `2g.45gb` |
+| 4 mem / 3 SM | `3g.20gb` | `3g.40gb` | `3g.71gb` | `3g.90gb` |
+| 4 mem / 4 SM | `4g.20gb` | `4g.40gb` | `4g.71gb` | `4g.90gb` |
+| 8 mem / 7 SM | `7g.40gb` | `7g.80gb` | `7g.141gb` | `7g.180gb` |
+
+The slice columns never move. **The datacenter MIG geometry has not changed from Ampere
+through Blackwell** — only the memory labels, which track total HBM. So the shape is written
+once in `datacenterShape` and each model supplies six names.
+
+The names are transcribed rather than computed, because they are not computable: a B200
+memory slice is 22.5 GB and NVIDIA prints it `23gb`; an H200 slice is 17.6 GB and prints
+`18gb`. Deriving those by rounding would be guessing at a published string.
+
+Families with a genuinely different shape exist — A30 and RTX PRO 6000 Blackwell are 4/4,
+RTX PRO 5000/4500 are 2/2, Thor has no memory slices — and would each need their own
+geometry. None is a profile fake-gpu-operator ships.
+
+### A trap in NVIDIA's own table
+
+The *Fraction of Memory* column cannot be trusted. It prints **1/8** for A100 `1g.10gb`,
+which contradicts the same row's max of **4 instances** — at 1/8 the GPU would hold seven.
+The profile takes two of the eight slices, and the instance count is what reveals it.
+
+Every slice count in this model is therefore derived from the max-instances column, never
+from the fraction. That choice predates the discovery and is why the A100 table was right
+the first time.
+
+### 180 or 192? The B200 memory discrepancy
+
+fake-gpu-operator's `b200` profile declares **192 GiB**, while NVIDIA's MIG table names the
+largest partition `7g.180gb`. Both cannot describe the same GPU.
+
+180 GB is the production figure: NVIDIA's HGX B200 datasheet and the DGX B200 user guide
+both state 180 GB per GPU, and DGX B200's quoted 1.4 TB across eight GPUs is 8 × 180. The
+192 GB number traces back to pre-release announcements and has propagated through
+third-party spec pages since.
+
+This is not a MIG-versus-non-MIG distinction — enabling MIG does not shrink a GPU by 12 GB.
+It is an inaccuracy in the upstream profile, and it is worth reporting there rather than
+patching here. gpu-sim keeps NVIDIA's `7g.180gb` naming, so a simulated B200 currently
+declares 192 GiB of memory and publishes partitions summing to 180 GB. Recorded here so the
+discrepancy is a known upstream data bug rather than a mystery in our arithmetic.
+
 ### Placements
 
 A partition occupies a contiguous, aligned run of memory slices. gpu-sim derives the valid

@@ -14,6 +14,11 @@ import "testing"
 //
 // Both dimensions bind, in different rows, which is why both are needed: 1g is capped at 7
 // by SMs despite 8 memory slices, and 1g.20gb at 4 by memory despite 7 SMs remaining.
+//
+// The max-instances column is also the only trustworthy one. NVIDIA's "Fraction of Memory"
+// column prints 1/8 for A100 1g.10gb, which cannot be right when the same row allows four
+// instances of it — the profile takes two of the eight slices. Every slice count below is
+// therefore derived from the instance count, not from the fraction.
 func TestMaxInstancesMatchesNVIDIA(t *testing.T) {
 	tests := []struct {
 		gpu     string
@@ -33,6 +38,20 @@ func TestMaxInstancesMatchesNVIDIA(t *testing.T) {
 		{"a100", "3g.20gb", 2},
 		{"a100", "4g.20gb", 1},
 		{"a100", "7g.40gb", 1},
+
+		{"h200", "1g.18gb", 7},
+		{"h200", "1g.35gb", 4},
+		{"h200", "2g.35gb", 3},
+		{"h200", "3g.71gb", 2},
+		{"h200", "4g.71gb", 1},
+		{"h200", "7g.141gb", 1},
+
+		{"b200", "1g.23gb", 7},
+		{"b200", "1g.45gb", 4},
+		{"b200", "2g.45gb", 3},
+		{"b200", "3g.90gb", 2},
+		{"b200", "4g.90gb", 1},
+		{"b200", "7g.180gb", 1},
 	}
 
 	for _, tt := range tests {
@@ -106,10 +125,58 @@ func TestTotalPartitionsDrivesTheSliceBudget(t *testing.T) {
 	}
 }
 
+// TestUnknownGPUProfileIsRefused guards the rule that a GPU whose MIG table NVIDIA does not
+// publish is refused rather than approximated.
+//
+// gb300 and l40s are refused for different reasons and both matter: GB300's table is simply
+// unpublished — the figures in secondary sources contradict each other — while L40S is an
+// Ada part that has no MIG support to model at all. A future geometry added for either
+// would have to be invented, and an invented table produces a simulation that is
+// confidently wrong.
 func TestUnknownGPUProfileIsRefused(t *testing.T) {
-	_, err := GeometryFor("b200")
-	if err == nil {
-		t.Fatal("GeometryFor accepted a GPU whose MIG table has not been verified")
+	for _, gpu := range []string{"gb300", "gb200", "l40s", "t4"} {
+		if _, err := GeometryFor(gpu); err == nil {
+			t.Errorf("GeometryFor(%q) accepted a GPU whose MIG table has not been verified", gpu)
+		}
+	}
+}
+
+// TestDatacenterModelsShareOneShape pins the finding that motivated adding H200 and B200:
+// the datacenter MIG geometry has not changed from Ampere to Blackwell. Every model here
+// presents the same 8 memory and 7 SM slices and cuts them the same six ways; only the
+// memory labels differ.
+//
+// If a model is ever added whose slice shape genuinely differs — A30 and the RTX PRO
+// Blackwell cards do — it belongs in its own geometry rather than in datacenterShape, and
+// this test is what will say so.
+func TestDatacenterModelsShareOneShape(t *testing.T) {
+	reference, err := GeometryFor("h100")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, gpu := range []string{"a100", "h200", "b200"} {
+		g, err := GeometryFor(gpu)
+		if err != nil {
+			t.Fatalf("GeometryFor(%q): %v", gpu, err)
+		}
+		if g.MemorySlices != reference.MemorySlices || g.SMSlices != reference.SMSlices {
+			t.Errorf("%s: %d/%d slices, want %d/%d",
+				gpu, g.MemorySlices, g.SMSlices, reference.MemorySlices, reference.SMSlices)
+		}
+		if len(g.Profiles) != len(reference.Profiles) {
+			t.Fatalf("%s: %d profiles, want %d", gpu, len(g.Profiles), len(reference.Profiles))
+		}
+		for i, p := range g.Profiles {
+			want := reference.Profiles[i]
+			if p.MemorySlices != want.MemorySlices || p.SMSlices != want.SMSlices {
+				t.Errorf("%s %s: %d memory / %d SM slices, want %d / %d (same shape as %s)",
+					gpu, p.Name, p.MemorySlices, p.SMSlices, want.MemorySlices, want.SMSlices, want.Name)
+			}
+			if p.Name == want.Name {
+				t.Errorf("%s %s: shares a name with H100, which means a label was not transcribed", gpu, p.Name)
+			}
+		}
 	}
 }
 
